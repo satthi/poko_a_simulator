@@ -11,8 +11,6 @@ services:
     volumes:
       - ./:/var/www
       - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
-    ports:
-      - "${VITE_PORT:-5173}:5173"
     networks:
       - laravel
     depends_on:
