@@ -13,11 +13,11 @@ class BlocksMasterSeeder extends Seeder
     public function run(): void
     {
         $blocks = [
-            ['name' => 'Stone', 'type' => 'solid'],
-            ['name' => 'Wood', 'type' => 'solid'],
-            ['name' => 'Dirt', 'type' => 'solid'],
-            ['name' => 'Sand', 'type' => 'solid'],
-            ['name' => 'Glass', 'type' => 'transparent'],
+            ['name' => 'Stone', 'type' => 'block', 'color' => '#808080', 'opacity' => 100],
+            ['name' => 'Wood', 'type' => 'block', 'color' => '#8B4513', 'opacity' => 100],
+            ['name' => 'Dirt', 'type' => 'block', 'color' => '#654321', 'opacity' => 100],
+            ['name' => 'Sand', 'type' => 'block', 'color' => '#C2B280', 'opacity' => 100],
+            ['name' => 'Glass', 'type' => 'block', 'color' => '#87CEEB', 'opacity' => 50],
         ];
 
         foreach ($blocks as $block) {

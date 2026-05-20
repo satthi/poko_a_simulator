@@ -14,5 +14,7 @@ class BlocksMaster extends Model
     protected $fillable = [
         'name',
         'type',
+        'color',
+        'opacity',
     ];
 }
