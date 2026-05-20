@@ -238,7 +238,7 @@ const groupItemsByMaterial = (items) => {
     return Array.from(groups.values());
 };
 
-function InstancedVoxels({ groups, boxArgs, layout = 'standard' }) {
+function InstancedVoxels({ groups, boxArgs, layout = 'standard', mirrorXCenter = null }) {
     const meshRefs = useRef([]);
     const tmpObj = useMemo(() => new THREE.Object3D(), []);
 
@@ -257,11 +257,14 @@ function InstancedVoxels({ groups, boxArgs, layout = 'standard' }) {
                 const px = Number(item.x);
                 const py = Number(item.y);
                 const pz = Number(item.z);
+                const renderedX = Number.isFinite(mirrorXCenter)
+                    ? ((2 * mirrorXCenter) - px)
+                    : px;
 
                 if (layout === 'walk') {
-                    tmpObj.position.set(px, pz, py);
+                    tmpObj.position.set(renderedX, pz, py);
                 } else {
-                    tmpObj.position.set(px, py, pz);
+                    tmpObj.position.set(renderedX, py, pz);
                 }
 
                 tmpObj.updateMatrix();
@@ -270,7 +273,7 @@ function InstancedVoxels({ groups, boxArgs, layout = 'standard' }) {
 
             mesh.instanceMatrix.needsUpdate = true;
         });
-    }, [groups, layout, tmpObj]);
+    }, [groups, layout, mirrorXCenter, tmpObj]);
 
     return (
         <>
@@ -283,6 +286,7 @@ function InstancedVoxels({ groups, boxArgs, layout = 'standard' }) {
                         }
                     }}
                     args={[null, null, group.items.length]}
+                    frustumCulled={false}
                 >
                     <boxGeometry args={boxArgs} />
                     <meshStandardMaterial color={group.color} transparent opacity={group.opacity} />
@@ -389,8 +393,8 @@ function BlocksScene({ blocks, decorations, bounds, interactive, maxBlocks, came
     const biggestSize = Math.max(sizeX, sizeY, sizeZ);
     const cameraDistance = Math.max(20, biggestSize * 1.25);
 
-    // デフォルト: Z軸上方向で正面右上から俯瞰（XY平面が地面に平行）
-    const finalCameraPos = cameraPosition ?? [centerX + cameraDistance, centerY - cameraDistance, centerZ + cameraDistance * 0.8];
+    // デフォルト: 歩行モードの初期向きに近い方向（-Yを見る向き）から俯瞰
+    const finalCameraPos = cameraPosition ?? [centerX, centerY + cameraDistance, centerZ + cameraDistance * 0.8];
     const finalCameraTarget = cameraTarget ?? [centerX, centerY, centerZ];
 
     return (
@@ -409,8 +413,8 @@ function BlocksScene({ blocks, decorations, bounds, interactive, maxBlocks, came
             <directionalLight position={[20, 30, 10]} intensity={0.7} />
             <directionalLight position={[-20, 10, -10]} intensity={0.3} />
 
-            <InstancedVoxels groups={groupedBlocks} boxArgs={[1, 1, 1]} />
-            <InstancedVoxels groups={groupedDecorations} boxArgs={[0.46, 0.46, 0.08]} />
+            <InstancedVoxels groups={groupedBlocks} boxArgs={[1, 1, 1]} mirrorXCenter={centerX} />
+            <InstancedVoxels groups={groupedDecorations} boxArgs={[0.46, 0.46, 0.08]} mirrorXCenter={centerX} />
 
             <mesh position={[centerX, centerY, bounds.minZ - 0.55]} receiveShadow>
                 <planeGeometry args={[sizeX + 2, sizeY + 2]} />
