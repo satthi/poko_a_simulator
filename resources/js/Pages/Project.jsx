@@ -347,6 +347,8 @@ export default function Project({ projectId }) {
     const [ellipseRadiusX, setEllipseRadiusX] = useState(4);
     const [ellipseRadiusY, setEllipseRadiusY] = useState(4);
     const [copySourceZ, setCopySourceZ] = useState(0);
+    const [filterCopySourceZ, setFilterCopySourceZ] = useState(0);
+    const [filterCopyBlockIds, setFilterCopyBlockIds] = useState([]);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
@@ -735,6 +737,46 @@ export default function Project({ projectId }) {
             setSuccess(`Z=${sourceZ} を Z=${currentZ} にコピーしました`);
         } else {
             setSuccess(`Z=${sourceZ} と Z=${currentZ} は同じ配置のため変更はありません`);
+        }
+    };
+
+    const copyFilteredPlaneToCurrent = () => {
+        if (!bounds || filterCopyBlockIds.length === 0) {
+            setError('コピーするブロックを1つ以上選択してください');
+            return;
+        }
+
+        const sourceZ = clamp(Number(filterCopySourceZ), bounds.minZ, bounds.maxZ);
+
+        if (sourceZ === currentZ) {
+            setSuccess(`コピー元とコピー先が同じ層です (Z=${currentZ})`);
+            return;
+        }
+
+        const targetIds = new Set(filterCopyBlockIds.map(Number));
+
+        finishDrawing();
+        cancelRangeFillMode();
+        cancelBucketFillMode();
+
+        const changed = updateBlockData((draft) => {
+            const copiedCells = [];
+            Object.entries(draft.cells).forEach(([key, blockId]) => {
+                const [, , z] = key.split(',').map(Number);
+                if (z === sourceZ && targetIds.has(Number(blockId))) {
+                    const [x, y] = key.split(',').map(Number);
+                    copiedCells.push({ x, y, blockId });
+                }
+            });
+            copiedCells.forEach(({ x, y, blockId }) => {
+                draft.cells[coordKey(x, y, currentZ)] = blockId;
+            });
+            return draft;
+        }, { recordHistory: true });
+
+        setError('');
+        if (changed) {
+            setSuccess(`Z=${sourceZ} の指定ブロック(${filterCopyBlockIds.length}種) を Z=${currentZ} にコピーしました`);
         }
     };
 
@@ -1664,6 +1706,71 @@ export default function Project({ projectId }) {
                                 </Stack>
                                 <Typography variant="caption" color="text.secondary">
                                     コピー先は現在の平面 (Z={currentZ}) です
+                                </Typography>
+                            </Card>
+
+                            <Card variant="outlined" sx={{ p: 2 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>特定ブロックのみコピー</Typography>
+                                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
+                                    <TextField
+                                        size="small"
+                                        type="number"
+                                        label="コピー元Z"
+                                        value={filterCopySourceZ}
+                                        onChange={(e) => {
+                                            const next = Number(e.target.value);
+                                            if (Number.isFinite(next)) setFilterCopySourceZ(next);
+                                        }}
+                                        inputProps={{ min: bounds.minZ, max: bounds.maxZ, step: 1 }}
+                                        sx={{ width: 140 }}
+                                    />
+                                    <Button
+                                        size="small"
+                                        variant="outlined"
+                                        disabled={filterCopyBlockIds.length === 0}
+                                        onClick={copyFilteredPlaneToCurrent}
+                                    >
+                                        現在平面へコピー
+                                    </Button>
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                                    コピーするブロックを選択（複数可）
+                                </Typography>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                                    {masters.map((master) => {
+                                        const selected = filterCopyBlockIds.includes(Number(master.id));
+                                        return (
+                                            <Button
+                                                key={master.id}
+                                                size="small"
+                                                variant={selected ? 'contained' : 'outlined'}
+                                                onClick={() => setFilterCopyBlockIds((prev) =>
+                                                    selected
+                                                        ? prev.filter((id) => id !== Number(master.id))
+                                                        : [...prev, Number(master.id)]
+                                                )}
+                                                startIcon={(
+                                                    <Box sx={{
+                                                        width: 12, height: 12, borderRadius: '2px',
+                                                        backgroundColor: master.color,
+                                                        border: '1px solid rgba(0,0,0,0.2)',
+                                                        flexShrink: 0,
+                                                    }} />
+                                                )}
+                                                sx={{
+                                                    borderColor: '#94a3b8',
+                                                    color: selected ? '#fff' : '#0f172a',
+                                                    backgroundColor: selected ? '#2563eb' : '#fff',
+                                                    '&:hover': { backgroundColor: selected ? '#1d4ed8' : '#f1f5f9' },
+                                                }}
+                                            >
+                                                {master.name}
+                                            </Button>
+                                        );
+                                    })}
+                                </Box>
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+                                    コピー先は現在の平面 (Z={currentZ}) です。既存ブロックには上書きします
                                 </Typography>
                             </Card>
                         </Stack>
