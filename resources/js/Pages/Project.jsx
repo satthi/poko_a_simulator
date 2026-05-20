@@ -127,9 +127,9 @@ const isLightHexColor = (hex) => {
     return luminance >= 190;
 };
 
-function WalkControls({ eyeHeight }) {
+function WalkControls() {
     const controlsRef = useRef();
-    const keys = useRef({ w: false, a: false, s: false, d: false });
+    const keys = useRef({ w: false, a: false, s: false, d: false, up: false, down: false });
     const { camera } = useThree();
     const SPEED = 6;
 
@@ -139,12 +139,16 @@ function WalkControls({ eyeHeight }) {
             if (e.code === 'KeyA' || e.code === 'ArrowLeft')  keys.current.a = true;
             if (e.code === 'KeyS' || e.code === 'ArrowDown')  keys.current.s = true;
             if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.current.d = true;
+            if (e.code === 'Space')                           { keys.current.up = true; e.preventDefault(); }
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') keys.current.down = true;
         };
         const up = (e) => {
             if (e.code === 'KeyW' || e.code === 'ArrowUp')    keys.current.w = false;
             if (e.code === 'KeyA' || e.code === 'ArrowLeft')  keys.current.a = false;
             if (e.code === 'KeyS' || e.code === 'ArrowDown')  keys.current.s = false;
             if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.current.d = false;
+            if (e.code === 'Space')                           keys.current.up = false;
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') keys.current.down = false;
         };
         window.addEventListener('keydown', down);
         window.addEventListener('keyup', up);
@@ -155,17 +159,20 @@ function WalkControls({ eyeHeight }) {
         if (!controlsRef.current?.isLocked) return;
         const dir = new THREE.Vector3();
         camera.getWorldDirection(dir);
-        dir.y = 0;
-        if (dir.length() < 0.001) return;
-        dir.normalize();
-        const right = new THREE.Vector3(-dir.z, 0, dir.x);
+        const horizDir = dir.clone();
+        horizDir.y = 0;
         const vel = new THREE.Vector3();
-        if (keys.current.w) vel.addScaledVector(dir,   SPEED * delta);
-        if (keys.current.s) vel.addScaledVector(dir,  -SPEED * delta);
-        if (keys.current.a) vel.addScaledVector(right, -SPEED * delta);
-        if (keys.current.d) vel.addScaledVector(right,  SPEED * delta);
+        if (horizDir.length() > 0.001) {
+            horizDir.normalize();
+            const right = new THREE.Vector3(-horizDir.z, 0, horizDir.x);
+            if (keys.current.w) vel.addScaledVector(horizDir,  SPEED * delta);
+            if (keys.current.s) vel.addScaledVector(horizDir, -SPEED * delta);
+            if (keys.current.a) vel.addScaledVector(right,    -SPEED * delta);
+            if (keys.current.d) vel.addScaledVector(right,     SPEED * delta);
+        }
+        if (keys.current.up)   vel.y += SPEED * delta;
+        if (keys.current.down) vel.y -= SPEED * delta;
         camera.position.add(vel);
-        camera.position.y = eyeHeight;
     });
 
     return <PointerLockControls ref={controlsRef} />;
@@ -205,7 +212,7 @@ function WalkScene({ blocks, bounds, maxBlocks }) {
                 <meshStandardMaterial color="#5a8f3c" />
             </mesh>
 
-            <WalkControls eyeHeight={eyeHeight} />
+            <WalkControls />
         </Canvas>
     );
 }
