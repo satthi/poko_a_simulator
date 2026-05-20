@@ -30,7 +30,7 @@ const CELL_PX = 32;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.4;
 const AUTOSAVE_DELAY_MS = 8000;
-const PREVIEW_VIEWPORT_PX = 300;
+const PREVIEW_VIEWPORT_PX = 360;
 const PREVIEW_BASE_CELL_PX = 16;
 const TARGET_VISIBLE_CELLS = 20;
 const GRID_GAP_PX = 1;
@@ -1006,7 +1006,6 @@ export default function Project({ projectId }) {
                         範囲: X({bounds.minX}..{bounds.maxX}) / Y({bounds.minY}..{bounds.maxY}) / Z({bounds.minZ}..{bounds.maxZ})
                     </Typography>
                 </Card>
-
                 <Box
                     sx={{
                         display: 'grid',
@@ -1015,74 +1014,74 @@ export default function Project({ projectId }) {
                         alignItems: 'start',
                     }}
                 >
-                    <Card sx={{ p: 2 }}>
-                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                            <Typography variant="subtitle1">Zレイヤー</Typography>
-                            <IconButton
-                                size="small"
-                                onClick={() => setCurrentZ((z) => Math.max(bounds.minZ, z - 1))}
-                                disabled={currentZ <= bounds.minZ}
-                            >
-                                <ExpandMoreIcon />
-                            </IconButton>
-                            <Typography>現在: {currentZ}</Typography>
-                            <IconButton
-                                size="small"
-                                onClick={() => setCurrentZ((z) => Math.min(bounds.maxZ, z + 1))}
-                                disabled={currentZ >= bounds.maxZ}
-                            >
-                                <ExpandLessIcon />
-                            </IconButton>
+                    <Stack spacing={2}>
+                        <Card sx={{ p: 2 }}>
+                            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                                <Typography variant="subtitle1">Zレイヤー</Typography>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => setCurrentZ((z) => Math.max(bounds.minZ, z - 1))}
+                                    disabled={currentZ <= bounds.minZ}
+                                >
+                                    <ExpandMoreIcon />
+                                </IconButton>
+                                <Typography>現在: {currentZ}</Typography>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => setCurrentZ((z) => Math.min(bounds.maxZ, z + 1))}
+                                    disabled={currentZ >= bounds.maxZ}
+                                >
+                                    <ExpandLessIcon />
+                                </IconButton>
 
-                            <Divider orientation="vertical" flexItem />
+                                <Divider orientation="vertical" flexItem />
 
-                            <Typography variant="body2">ズーム</Typography>
-                            <IconButton size="small" onClick={() => setScale((s) => Math.max(MIN_SCALE, Number((s - 0.1).toFixed(2))))}>
-                                <ZoomOutIcon />
-                            </IconButton>
-                            <Typography variant="body2">{Math.round(scale * 100)}%</Typography>
-                            <IconButton size="small" onClick={() => setScale((s) => Math.min(MAX_SCALE, Number((s + 0.1).toFixed(2))))}>
-                                <ZoomInIcon />
-                            </IconButton>
-                            <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                                Shift+ドラッグ で画面移動 / 左ドラッグ で連続配置
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                                表示範囲: X({visibleXList[0]}..{visibleXList[visibleXList.length - 1]}) Y({visibleYList[0]}..{visibleYList[visibleYList.length - 1]})
-                            </Typography>
-                        </Stack>
+                                <Typography variant="body2">ズーム</Typography>
+                                <IconButton size="small" onClick={() => setScale((s) => Math.max(MIN_SCALE, Number((s - 0.1).toFixed(2))))}>
+                                    <ZoomOutIcon />
+                                </IconButton>
+                                <Typography variant="body2">{Math.round(scale * 100)}%</Typography>
+                                <IconButton size="small" onClick={() => setScale((s) => Math.min(MAX_SCALE, Number((s + 0.1).toFixed(2))))}>
+                                    <ZoomInIcon />
+                                </IconButton>
+                                <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                                    Shift+ドラッグ で画面移動 / 左ドラッグ で連続配置
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                                    表示範囲: X({visibleXList[0]}..{visibleXList[visibleXList.length - 1]}) Y({visibleYList[0]}..{visibleYList[visibleYList.length - 1]})
+                                </Typography>
+                            </Stack>
 
-                        <Box
-                            ref={mainViewportRef}
-                            onWheel={onWheel}
-                            onMouseDown={onPanStart}
-                            onMouseMove={onPanMove}
-                            onMouseUp={onPanEnd}
-                            onMouseLeave={onPanEnd}
-                            onMouseDownCapture={() => setHoverCoord(null)}
-                            sx={{
-                                overflow: 'hidden',
-                                border: '1px solid #d0d7de',
-                                borderRadius: 1,
-                                backgroundColor: '#f8fafc',
-                                height: 520,
-                                cursor: dragState.current.panning ? 'grabbing' : 'default',
-                            }}
-                        >
                             <Box
+                                ref={mainViewportRef}
+                                onWheel={onWheel}
+                                onMouseDown={onPanStart}
+                                onMouseMove={onPanMove}
+                                onMouseUp={onPanEnd}
+                                onMouseLeave={onPanEnd}
+                                onMouseDownCapture={() => setHoverCoord(null)}
                                 sx={{
-                                    transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-                                    transformOrigin: '0 0',
-                                    p: 2,
-                                    width: 'fit-content',
+                                    overflow: 'hidden',
+                                    border: '1px solid #d0d7de',
+                                    borderRadius: 1,
+                                    backgroundColor: '#f8fafc',
+                                    height: 520,
+                                    cursor: dragState.current.panning ? 'grabbing' : 'default',
                                 }}
                             >
-                                {renderPlane(currentZ, { clickable: true, title: `現在の平面 (Z=${currentZ})` })}
+                                <Box
+                                    sx={{
+                                        transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+                                        transformOrigin: '0 0',
+                                        p: 2,
+                                        width: 'fit-content',
+                                    }}
+                                >
+                                    {renderPlane(currentZ, { clickable: true, title: `現在の平面 (Z=${currentZ})` })}
+                                </Box>
                             </Box>
-                        </Box>
-                    </Card>
+                        </Card>
 
-                    <Stack spacing={2} sx={{ minWidth: 0 }}>
                         <Card sx={{ p: 1.5 }}>
                             <Typography variant="subtitle2" sx={{ mb: 1 }}>エリアナビ (50x50)</Typography>
                             <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
@@ -1142,6 +1141,28 @@ export default function Project({ projectId }) {
                                 ミニマップクリックで該当地点へジャンプ
                             </Typography>
                         </Card>
+                    </Stack>
+
+                    <Stack spacing={2} sx={{ minWidth: 0 }}>
+
+                        <Box>
+                            {renderPlane(currentZ + 1, {
+                                clickable: false,
+                                title: `上の平面 (Z=${currentZ + 1})`,
+                                compact: true,
+                            })}
+                        </Box>
+                        <Box>
+                            {renderPlane(currentZ - 1, {
+                                clickable: false,
+                                title: `下の平面 (Z=${currentZ - 1})`,
+                                compact: true,
+                            })}
+                        </Box>
+
+                        <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
+                            上下プレビューはメイン2Dのズーム・移動に連動します
+                        </Typography>
 
                         <Card sx={{ p: 1.5 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
@@ -1168,25 +1189,6 @@ export default function Project({ projectId }) {
                                 <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive={false} />
                             </Box>
                         </Card>
-
-                        <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
-                            上下プレビューはメイン2Dのズーム・移動に連動します
-                        </Typography>
-
-                        <Box>
-                            {renderPlane(currentZ + 1, {
-                                clickable: false,
-                                title: `上の平面 (Z=${currentZ + 1})`,
-                                compact: true,
-                            })}
-                        </Box>
-                        <Box>
-                            {renderPlane(currentZ - 1, {
-                                clickable: false,
-                                title: `下の平面 (Z=${currentZ - 1})`,
-                                compact: true,
-                            })}
-                        </Box>
                     </Stack>
                 </Box>
 
