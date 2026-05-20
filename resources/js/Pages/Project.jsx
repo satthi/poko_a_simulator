@@ -36,6 +36,8 @@ const TARGET_VISIBLE_CELLS = 20;
 const GRID_GAP_PX = 1;
 const EDIT_WINDOW_CELLS = 50;
 const MINIMAP_PX = 220;
+const SMALL_3D_MAX_BLOCKS = 20000;
+const LARGE_3D_MAX_BLOCKS = 120000;
 const CHECKER_BG =
     'repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px';
 
@@ -123,7 +125,16 @@ const isLightHexColor = (hex) => {
     return luminance >= 190;
 };
 
-function BlocksScene({ blocks, bounds, interactive }) {
+function BlocksScene({ blocks, bounds, interactive, maxBlocks }) {
+    const sampledBlocks = useMemo(() => {
+        if (!maxBlocks || blocks.length <= maxBlocks) {
+            return blocks;
+        }
+
+        const step = Math.ceil(blocks.length / maxBlocks);
+        return blocks.filter((_, index) => index % step === 0);
+    }, [blocks, maxBlocks]);
+
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerY = (bounds.minY + bounds.maxY) / 2;
     const centerZ = (bounds.minZ + bounds.maxZ) / 2;
@@ -132,13 +143,15 @@ function BlocksScene({ blocks, bounds, interactive }) {
     const sizeY = Math.max(1, bounds.maxY - bounds.minY + 1);
     const sizeZ = Math.max(1, bounds.maxZ - bounds.minZ + 1);
     const biggestSize = Math.max(sizeX, sizeY, sizeZ);
-    const cameraDistance = Math.max(10, biggestSize * 1.8);
+    const cameraDistance = Math.max(20, biggestSize * 1.25);
 
     return (
         <Canvas
             camera={{
                 position: [centerX + cameraDistance, centerY + cameraDistance, centerZ + cameraDistance],
-                fov: 45,
+                near: 0.1,
+                far: 10000,
+                fov: 42,
             }}
         >
             <color attach="background" args={['#f8fafc']} />
@@ -146,7 +159,7 @@ function BlocksScene({ blocks, bounds, interactive }) {
             <directionalLight position={[20, 30, 10]} intensity={0.7} />
             <directionalLight position={[-20, 10, -10]} intensity={0.3} />
 
-            {blocks.map((block) => (
+            {sampledBlocks.map((block) => (
                 <mesh key={block.key} position={[block.x, block.y, block.z]}>
                     <boxGeometry args={[1, 1, 1]} />
                     <meshStandardMaterial
@@ -169,6 +182,7 @@ function BlocksScene({ blocks, bounds, interactive }) {
             />
 
             <OrbitControls
+                target={[centerX, centerY, centerZ]}
                 enablePan={interactive}
                 enableZoom
                 enableRotate
@@ -1214,8 +1228,13 @@ export default function Project({ projectId }) {
                                     cursor: 'pointer',
                                 }}
                             >
-                                <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive={false} />
+                                <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive={false} maxBlocks={SMALL_3D_MAX_BLOCKS} />
                             </Box>
+                            {blocksFor3D.length > SMALL_3D_MAX_BLOCKS && (
+                                <Typography variant="caption" color="text.secondary">
+                                    描画負荷軽減のため3Dプレビューは間引いて表示中（{blocksFor3D.length.toLocaleString()}ブロック）
+                                </Typography>
+                            )}
                         </Card>
                     </Stack>
                 </Box>
@@ -1229,7 +1248,7 @@ export default function Project({ projectId }) {
                     <DialogContent sx={{ p: 2 }}>
                         <Typography variant="subtitle1" sx={{ mb: 1 }}>3Dシミュレーター（拡大表示）</Typography>
                         <Box sx={{ height: '70vh', border: '1px solid #cbd5e1', borderRadius: 1, overflow: 'hidden' }}>
-                            <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive />
+                            <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive maxBlocks={LARGE_3D_MAX_BLOCKS} />
                         </Box>
                     </DialogContent>
                 </Dialog>
