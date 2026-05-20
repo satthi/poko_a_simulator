@@ -24,6 +24,8 @@ import {
 const CELL_PX = 32;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.4;
+const CHECKER_BG =
+    'repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px';
 
 const normalizeBlockData = (blockData, fallbackSize) => {
     const boundsFromSize = {
@@ -84,6 +86,18 @@ const normalizeBlockData = (blockData, fallbackSize) => {
 };
 
 const coordKey = (x, y, z) => `${x},${y},${z}`;
+
+const isLightHexColor = (hex) => {
+    if (typeof hex !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+        return false;
+    }
+
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const luminance = (0.299 * r) + (0.587 * g) + (0.114 * b);
+    return luminance >= 190;
+};
 
 export default function Project({ projectId }) {
     const [project, setProject] = useState(null);
@@ -321,14 +335,16 @@ export default function Project({ projectId }) {
                         display: 'grid',
                         gridTemplateColumns: `repeat(${xList.length}, ${size}px)`,
                         gap: '1px',
-                        backgroundColor: '#d9d9d9',
-                        border: '1px solid #d9d9d9',
+                        backgroundColor: '#cbd5e1',
+                        border: '1px solid #94a3b8',
                         width: 'fit-content',
                     }}
                 >
                     {yList.map((y) => xList.map((x) => {
                         const block = getBlockForCell(x, y, z);
                         const isCurrentLayer = z === currentZ;
+                        const blockColor = block?.color ?? null;
+                        const showStrongBorder = blockColor ? isLightHexColor(blockColor) : false;
                         return (
                             <Box
                                 key={`${x}-${y}-${z}`}
@@ -342,9 +358,10 @@ export default function Project({ projectId }) {
                                 sx={{
                                     width: size,
                                     height: size,
-                                    backgroundColor: block?.color ?? '#ffffff',
+                                    background: blockColor ? blockColor : CHECKER_BG,
                                     opacity: block ? Math.max(0.1, Number(block.opacity ?? 100) / 100) : 1,
-                                    border: isCurrentLayer ? '1px solid #90caf9' : '1px solid #f3f3f3',
+                                    border: isCurrentLayer ? '1px solid #2563eb' : '1px solid #cbd5e1',
+                                    boxShadow: showStrongBorder ? 'inset 0 0 0 1px #334155' : 'none',
                                     cursor: clickable ? 'pointer' : 'default',
                                 }}
                             />
@@ -415,10 +432,26 @@ export default function Project({ projectId }) {
                                 key={master.id}
                                 variant={selectedBlockId === Number(master.id) ? 'contained' : 'outlined'}
                                 onClick={() => setSelectedBlockId(Number(master.id))}
+                                startIcon={(
+                                    <Box
+                                        sx={{
+                                            width: 14,
+                                            height: 14,
+                                            borderRadius: '3px',
+                                            border: '1px solid #64748b',
+                                            background: master.color,
+                                            boxShadow: isLightHexColor(master.color) ? 'inset 0 0 0 1px #334155' : 'none',
+                                        }}
+                                    />
+                                )}
                                 sx={{
-                                    borderColor: master.color,
-                                    color: selectedBlockId === Number(master.id) ? '#fff' : master.color,
-                                    backgroundColor: selectedBlockId === Number(master.id) ? master.color : 'transparent',
+                                    borderColor: '#94a3b8',
+                                    color: '#0f172a',
+                                    backgroundColor: selectedBlockId === Number(master.id) ? '#e2e8f0' : '#ffffff',
+                                    '&:hover': {
+                                        backgroundColor: selectedBlockId === Number(master.id) ? '#cbd5e1' : '#f8fafc',
+                                        borderColor: '#64748b',
+                                    },
                                 }}
                             >
                                 {master.name}
