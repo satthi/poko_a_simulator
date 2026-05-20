@@ -213,6 +213,9 @@ export default function Project({ projectId }) {
     const [isRangeFillMode, setIsRangeFillMode] = useState(false);
     const [rangeFillAnchor, setRangeFillAnchor] = useState(null);
     const [isBucketFillMode, setIsBucketFillMode] = useState(false);
+    const [isEllipseMode, setIsEllipseMode] = useState(false);
+    const [ellipseRadiusX, setEllipseRadiusX] = useState(4);
+    const [ellipseRadiusY, setEllipseRadiusY] = useState(4);
     const [copySourceZ, setCopySourceZ] = useState(0);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
@@ -674,6 +677,78 @@ export default function Project({ projectId }) {
         });
     };
 
+    const placeEllipseOnCurrentPlane = (centerX, centerY) => {
+        updateBlockData((draft) => {
+            const blockId = Number(selectedBlockId);
+            const rx = Math.max(0, Math.floor(Number(ellipseRadiusX)));
+            const ry = Math.max(0, Math.floor(Number(ellipseRadiusY)));
+
+            if (!Number.isFinite(blockId) || blockId <= 0) {
+                return draft;
+            }
+
+            const inBounds = (x, y) => (
+                x >= draft.bounds.minX && x <= draft.bounds.maxX
+                && y >= draft.bounds.minY && y <= draft.bounds.maxY
+            );
+
+            const isInEllipse = (x, y) => {
+                if (rx === 0 && ry === 0) {
+                    return x === centerX && y === centerY;
+                }
+                const nx = rx === 0 ? (x === centerX ? 0 : Infinity) : (x - centerX) / rx;
+                const ny = ry === 0 ? (y === centerY ? 0 : Infinity) : (y - centerY) / ry;
+                const dist = (nx * nx) + (ny * ny);
+                return dist <= 1.0;
+            };
+
+            const pointSet = new Set();
+            const minX = centerX - rx - 1;
+            const maxX = centerX + rx + 1;
+            const minY = centerY - ry - 1;
+            const maxY = centerY + ry + 1;
+
+            for (let x = minX; x <= maxX; x += 1) {
+                for (let y = minY; y <= maxY; y += 1) {
+                    if (!inBounds(x, y)) {
+                        continue;
+                    }
+
+                    const isInside = isInEllipse(x, y);
+                    let hasOutsideNeighbor = false;
+
+                    for (let dx = -1; dx <= 1; dx += 1) {
+                        for (let dy = -1; dy <= 1; dy += 1) {
+                            if (dx === 0 && dy === 0) {
+                                continue;
+                            }
+                            const nx = x + dx;
+                            const ny = y + dy;
+                            if (inBounds(nx, ny) && !isInEllipse(nx, ny)) {
+                                hasOutsideNeighbor = true;
+                                break;
+                            }
+                        }
+                        if (hasOutsideNeighbor) {
+                            break;
+                        }
+                    }
+
+                    if (isInside && hasOutsideNeighbor) {
+                        pointSet.add(`${x},${y}`);
+                    }
+                }
+            }
+
+            pointSet.forEach((point) => {
+                const [x, y] = point.split(',').map(Number);
+                draft.cells[coordKey(x, y, currentZ)] = blockId;
+            });
+
+            return draft;
+        });
+    };
+
     const startRangeFillMode = () => {
         if (selectedBlockId === null) {
             setError('範囲塗りつぶしには配置ブロックを選択してください');
@@ -708,6 +783,24 @@ export default function Project({ projectId }) {
 
     const cancelBucketFillMode = () => {
         setIsBucketFillMode(false);
+    };
+
+    const startEllipseMode = () => {
+        if (selectedBlockId === null) {
+            setError('円/楕円の作成には配置ブロックを選択してください');
+            return;
+        }
+
+        finishDrawing();
+        cancelRangeFillMode();
+        cancelBucketFillMode();
+        setError('');
+        setSuccess(`円/楕円モード: 中心をクリックしてください (半径X=${ellipseRadiusX}, 半径Y=${ellipseRadiusY})`);
+        setIsEllipseMode(true);
+    };
+
+    const cancelEllipseMode = () => {
+        setIsEllipseMode(false);
     };
 
     const handleRangeFillClick = (x, y, z) => {
@@ -748,6 +841,22 @@ export default function Project({ projectId }) {
         floodFillOnCurrentPlane(x, y);
         setError('');
         setSuccess(`塗りつぶしました: (${x}, ${y}, Z=${z})`);
+        return true;
+    };
+
+    const handleEllipseClick = (x, y, z) => {
+        if (!isEllipseMode || z !== currentZ) {
+            return false;
+        }
+
+        if (selectedBlockId === null) {
+            setError('円/楕円の作成には配置ブロックを選択してください');
+            return true;
+        }
+
+        placeEllipseOnCurrentPlane(x, y);
+        setError('');
+        setSuccess(`円/楕円を配置しました: 中心(${x}, ${y}, Z=${z}) / 半径X=${ellipseRadiusX}, 半径Y=${ellipseRadiusY}`);
         return true;
     };
 
@@ -1093,6 +1202,12 @@ export default function Project({ projectId }) {
                                             return;
                                         }
                                         e.stopPropagation();
+                                        if (handleEllipseClick(x, y, z)) {
+                                            if (shouldUseHoverGuide) {
+                                                setHoverCoord({ x, y });
+                                            }
+                                            return;
+                                        }
                                         if (handleBucketFillClick(x, y, z)) {
                                             if (shouldUseHoverGuide) {
                                                 setHoverCoord({ x, y });
@@ -1115,7 +1230,7 @@ export default function Project({ projectId }) {
                                             if (shouldUseHoverGuide) {
                                                 setHoverCoord({ x, y });
                                             }
-                                            if (!isRangeFillMode && !isBucketFillMode) {
+                                            if (!isRangeFillMode && !isBucketFillMode && !isEllipseMode) {
                                                 drawAt(x, y, z);
                                             }
                                         }
@@ -1133,7 +1248,7 @@ export default function Project({ projectId }) {
                                             isGuidePoint ? (isAdjacentPlane ? '0 0 0 2px rgba(217, 70, 239, 0.95) inset' : '0 0 0 2px rgba(37, 99, 235, 0.95) inset') : null,
                                             isRangeAnchor ? '0 0 0 2px rgba(234, 88, 12, 0.95) inset' : null,
                                         ].filter(Boolean).join(', '),
-                                        cursor: clickable ? ((isRangeFillMode || isBucketFillMode) ? 'crosshair' : 'pointer') : 'default',
+                                        cursor: clickable ? ((isRangeFillMode || isBucketFillMode || isEllipseMode) ? 'crosshair' : 'pointer') : 'default',
                                     }}
                                 />
                             );
@@ -1214,10 +1329,11 @@ export default function Project({ projectId }) {
                         <Stack spacing={2} sx={{ mt: 2 }}>
                             <Card variant="outlined" sx={{ p: 2 }}>
                                 <Typography variant="subtitle2" sx={{ mb: 1 }}>配置ブロック</Typography>
-                                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 1, mb: 1 }}>
                                     <Button
                                         variant={selectedBlockId === null ? 'contained' : 'outlined'}
                                         color="inherit"
+                                        size="small"
                                         onClick={() => setSelectedBlockId(null)}
                                         startIcon={<RemoveIcon />}
                                     >
@@ -1227,6 +1343,7 @@ export default function Project({ projectId }) {
                                         <Button
                                             key={master.id}
                                             variant={selectedBlockId === Number(master.id) ? 'contained' : 'outlined'}
+                                            size="small"
                                             onClick={() => setSelectedBlockId(Number(master.id))}
                                             startIcon={(
                                                 <Box
@@ -1253,12 +1370,12 @@ export default function Project({ projectId }) {
                                             {master.name}
                                         </Button>
                                     ))}
-                                </Stack>
+                                </Box>
                             </Card>
 
                             <Card variant="outlined" sx={{ p: 2 }}>
                                 <Typography variant="subtitle2" sx={{ mb: 1 }}>領域操作（各軸の両方向）</Typography>
-                                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 1, mb: 1 }}>
                                     <Button size="small" onClick={() => adjustBound('minX', 'expand')}>X- 拡張</Button>
                                     <Button size="small" onClick={() => adjustBound('minX', 'shrink')}>X- 削除</Button>
                                     <Button size="small" onClick={() => adjustBound('maxX', 'expand')}>X+ 拡張</Button>
@@ -1271,7 +1388,7 @@ export default function Project({ projectId }) {
                                     <Button size="small" onClick={() => adjustBound('minZ', 'shrink')}>Z- 削除</Button>
                                     <Button size="small" onClick={() => adjustBound('maxZ', 'expand')}>Z+ 拡張</Button>
                                     <Button size="small" onClick={() => adjustBound('maxZ', 'shrink')}>Z+ 削除</Button>
-                                </Stack>
+                                </Box>
                                 <Typography variant="caption" color="text.secondary">
                                     範囲: X({bounds.minX}..{bounds.maxX}) / Y({bounds.minY}..{bounds.maxY}) / Z({bounds.minZ}..{bounds.maxZ})
                                 </Typography>
@@ -1279,7 +1396,7 @@ export default function Project({ projectId }) {
 
                             <Card variant="outlined" sx={{ p: 2, borderStyle: 'dashed' }}>
                                 <Typography variant="subtitle2" sx={{ mb: 1 }}>便利ツール</Typography>
-                                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 1, mb: 1 }}>
                                     <Button
                                         size="small"
                                         color="error"
@@ -1304,7 +1421,7 @@ export default function Project({ projectId }) {
                                     >
                                         {isBucketFillMode ? 'ペンキ塗りつぶしを終了' : 'ペンキ塗りつぶし'}
                                     </Button>
-                                </Stack>
+                                </Box>
                                 {isRangeFillMode && (
                                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
                                         {!rangeFillAnchor
@@ -1317,7 +1434,63 @@ export default function Project({ projectId }) {
                                         現在のZ平面で、クリック位置から同じ種類（空白含む）で連結した領域を塗りつぶします
                                     </Typography>
                                 )}
-                                <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                                    ここにショートカット・変換ツール・定型配置などを追加できます
+                                </Typography>
+                            </Card>
+
+                            <Card variant="outlined" sx={{ p: 2 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>円/楕円線を作成</Typography>
+                                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 1, mb: 1 }}>
+                                    <Button
+                                        size="small"
+                                        variant={isEllipseMode ? 'contained' : 'outlined'}
+                                        onClick={isEllipseMode ? cancelEllipseMode : startEllipseMode}
+                                        disabled={selectedBlockId === null && !isEllipseMode}
+                                    >
+                                        {isEllipseMode ? 'モードを終了' : '線を作成'}
+                                    </Button>
+                                </Box>
+                                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                                    <TextField
+                                        size="small"
+                                        type="number"
+                                        label="半径X"
+                                        value={ellipseRadiusX}
+                                        onChange={(e) => {
+                                            const next = Number(e.target.value);
+                                            if (Number.isFinite(next)) {
+                                                setEllipseRadiusX(Math.max(0, Math.floor(next)));
+                                            }
+                                        }}
+                                        inputProps={{ min: 0, step: 1 }}
+                                        sx={{ width: 120 }}
+                                    />
+                                    <TextField
+                                        size="small"
+                                        type="number"
+                                        label="半径Y"
+                                        value={ellipseRadiusY}
+                                        onChange={(e) => {
+                                            const next = Number(e.target.value);
+                                            if (Number.isFinite(next)) {
+                                                setEllipseRadiusY(Math.max(0, Math.floor(next)));
+                                            }
+                                        }}
+                                        inputProps={{ min: 0, step: 1 }}
+                                        sx={{ width: 120 }}
+                                    />
+                                </Stack>
+                                {isEllipseMode && (
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                                        現在のZ平面で中心をクリックすると、指定半径で円/楕円の線を配置します
+                                    </Typography>
+                                )}
+                            </Card>
+
+                            <Card variant="outlined" sx={{ p: 2 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>平面をコピー</Typography>
+                                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
                                     <TextField
                                         size="small"
                                         type="number"
@@ -1340,16 +1513,14 @@ export default function Project({ projectId }) {
                                         現在平面へコピー
                                     </Button>
                                 </Stack>
-                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                                <Typography variant="caption" color="text.secondary">
                                     コピー先は現在の平面 (Z={currentZ}) です
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                                    ここにショートカット・変換ツール・定型配置などを追加できます
                                 </Typography>
                             </Card>
                         </Stack>
                     )}
                 </Card>
+
                 <Box
                     sx={{
                         display: 'grid',
