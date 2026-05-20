@@ -209,6 +209,8 @@ export default function Project({ projectId }) {
     const [autoSaveMessage, setAutoSaveMessage] = useState('');
     const [isPreview3DOpen, setIsPreview3DOpen] = useState(false);
     const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false);
+    const [isRangeFillMode, setIsRangeFillMode] = useState(false);
+    const [rangeFillAnchor, setRangeFillAnchor] = useState(null);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
@@ -527,6 +529,86 @@ export default function Project({ projectId }) {
             draft.cells = filteredCells;
             return draft;
         });
+    };
+
+    const clearCurrentPlane = () => {
+        updateBlockData((draft) => {
+            const nextCells = {};
+            Object.entries(draft.cells).forEach(([key, blockId]) => {
+                const [, , z] = key.split(',').map(Number);
+                if (z !== currentZ) {
+                    nextCells[key] = blockId;
+                }
+            });
+
+            draft.cells = nextCells;
+            return draft;
+        });
+    };
+
+    const fillRectangleOnCurrentPlane = (start, end) => {
+        updateBlockData((draft) => {
+            const minX = Math.min(start.x, end.x);
+            const maxX = Math.max(start.x, end.x);
+            const minY = Math.min(start.y, end.y);
+            const maxY = Math.max(start.y, end.y);
+
+            for (let x = minX; x <= maxX; x += 1) {
+                for (let y = minY; y <= maxY; y += 1) {
+                    const key = coordKey(x, y, currentZ);
+                    if (selectedBlockId === null) {
+                        delete draft.cells[key];
+                    } else {
+                        draft.cells[key] = Number(selectedBlockId);
+                    }
+                }
+            }
+
+            return draft;
+        });
+    };
+
+    const startRangeFillMode = () => {
+        if (selectedBlockId === null) {
+            setError('範囲塗りつぶしには配置ブロックを選択してください');
+            return;
+        }
+
+        finishDrawing();
+        setError('');
+        setSuccess('範囲塗りつぶしモード: 開始点をクリックしてください');
+        setRangeFillAnchor(null);
+        setIsRangeFillMode(true);
+    };
+
+    const cancelRangeFillMode = () => {
+        setIsRangeFillMode(false);
+        setRangeFillAnchor(null);
+    };
+
+    const handleRangeFillClick = (x, y, z) => {
+        if (!isRangeFillMode || z !== currentZ) {
+            return false;
+        }
+
+        if (selectedBlockId === null) {
+            setError('範囲塗りつぶしには配置ブロックを選択してください');
+            return true;
+        }
+
+        if (!rangeFillAnchor) {
+            setRangeFillAnchor({ x, y, z });
+            setError('');
+            setSuccess(`開始点を設定しました (${x}, ${y}, Z=${z})。終了点をクリックしてください`);
+            return true;
+        }
+
+        fillRectangleOnCurrentPlane(rangeFillAnchor, { x, y, z });
+        setError('');
+        setSuccess(`範囲を塗りつぶしました: (${rangeFillAnchor.x}, ${rangeFillAnchor.y}) - (${x}, ${y})`);
+        setRangeFillAnchor(null);
+        setIsRangeFillMode(false);
+        return true;
     };
 
     const getBlockForCell = (x, y, z) => {
@@ -862,6 +944,7 @@ export default function Project({ projectId }) {
                             const isGuideLine = shouldUseHoverGuide && !!hoverCoord && (x === hoverCoord.x || y === hoverCoord.y);
                             const isGuidePoint = shouldUseHoverGuide && !!hoverCoord && (x === hoverCoord.x && y === hoverCoord.y);
                             const isAdjacentPlane = z !== currentZ;
+                            const isRangeAnchor = !!rangeFillAnchor && rangeFillAnchor.x === x && rangeFillAnchor.y === y && rangeFillAnchor.z === z;
                             return (
                                 <Box
                                     key={`${x}-${y}-${z}`}
@@ -870,6 +953,12 @@ export default function Project({ projectId }) {
                                             return;
                                         }
                                         e.stopPropagation();
+                                        if (handleRangeFillClick(x, y, z)) {
+                                            if (shouldUseHoverGuide) {
+                                                setHoverCoord({ x, y });
+                                            }
+                                            return;
+                                        }
                                         startDrawingAt(x, y, z);
                                         if (shouldUseHoverGuide) {
                                             setHoverCoord({ x, y });
@@ -880,7 +969,9 @@ export default function Project({ projectId }) {
                                             if (shouldUseHoverGuide) {
                                                 setHoverCoord({ x, y });
                                             }
-                                            drawAt(x, y, z);
+                                            if (!isRangeFillMode) {
+                                                drawAt(x, y, z);
+                                            }
                                         }
                                     }}
                                     title={`x:${x}, y:${y}, z:${z}`}
@@ -894,8 +985,9 @@ export default function Project({ projectId }) {
                                             showStrongBorder ? 'inset 0 0 0 1px #334155' : null,
                                             isGuideLine ? 'inset 0 0 0 1px rgba(37, 99, 235, 0.45)' : null,
                                             isGuidePoint ? (isAdjacentPlane ? '0 0 0 2px rgba(217, 70, 239, 0.95) inset' : '0 0 0 2px rgba(37, 99, 235, 0.95) inset') : null,
+                                            isRangeAnchor ? '0 0 0 2px rgba(234, 88, 12, 0.95) inset' : null,
                                         ].filter(Boolean).join(', '),
-                                        cursor: clickable ? 'pointer' : 'default',
+                                        cursor: clickable ? (isRangeFillMode ? 'crosshair' : 'pointer') : 'default',
                                     }}
                                 />
                             );
@@ -1040,8 +1132,33 @@ export default function Project({ projectId }) {
                             </Card>
 
                             <Card variant="outlined" sx={{ p: 2, borderStyle: 'dashed' }}>
-                                <Typography variant="subtitle2">便利ツール追加枠</Typography>
-                                <Typography variant="caption" color="text.secondary">
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>便利ツール</Typography>
+                                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                    <Button
+                                        size="small"
+                                        color="error"
+                                        variant="outlined"
+                                        onClick={clearCurrentPlane}
+                                    >
+                                        現在の平面を全消し
+                                    </Button>
+                                    <Button
+                                        size="small"
+                                        variant={isRangeFillMode ? 'contained' : 'outlined'}
+                                        onClick={isRangeFillMode ? cancelRangeFillMode : startRangeFillMode}
+                                        disabled={selectedBlockId === null && !isRangeFillMode}
+                                    >
+                                        {isRangeFillMode ? '範囲塗りつぶしを終了' : '範囲塗りつぶし'}
+                                    </Button>
+                                </Stack>
+                                {isRangeFillMode && (
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                                        {!rangeFillAnchor
+                                            ? `開始点をクリックしてください (Z=${currentZ})`
+                                            : `開始点: (${rangeFillAnchor.x}, ${rangeFillAnchor.y}, Z=${rangeFillAnchor.z}) / 終了点をクリックしてください`}
+                                    </Typography>
+                                )}
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
                                     ここにショートカット・変換ツール・定型配置などを追加できます
                                 </Typography>
                             </Card>
