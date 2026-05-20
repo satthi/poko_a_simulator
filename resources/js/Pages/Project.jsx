@@ -24,6 +24,7 @@ import {
 const CELL_PX = 32;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.4;
+const AUTOSAVE_DELAY_MS = 8000;
 const CHECKER_BG =
     'repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px';
 
@@ -87,6 +88,17 @@ const normalizeBlockData = (blockData, fallbackSize) => {
 
 const coordKey = (x, y, z) => `${x},${y},${z}`;
 
+const cloneBlockData = (data) => JSON.parse(JSON.stringify(data));
+const blockDataEquals = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const isEditableElement = (target) => {
+    if (!target || !(target instanceof HTMLElement)) {
+        return false;
+    }
+
+    const tagName = target.tagName.toLowerCase();
+    return target.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select';
+};
+
 const isLightHexColor = (hex) => {
     if (typeof hex !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(hex)) {
         return false;
@@ -102,17 +114,74 @@ const isLightHexColor = (hex) => {
 export default function Project({ projectId }) {
     const [project, setProject] = useState(null);
     const [blockData, setBlockData] = useState(null);
+    const [historyState, setHistoryState] = useState({ stack: [], index: -1 });
     const [masters, setMasters] = useState([]);
     const [selectedBlockId, setSelectedBlockId] = useState(null);
+    const [hoverCoord, setHoverCoord] = useState(null);
     const [currentZ, setCurrentZ] = useState(0);
     const [scale, setScale] = useState(1);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [lastSavedSnapshot, setLastSavedSnapshot] = useState('');
+    const [autoSaveMessage, setAutoSaveMessage] = useState('');
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
     const dragState = useRef({ panning: false, lastX: 0, lastY: 0, moved: false });
+    const drawState = useRef({ drawing: false, changed: false, lastKey: null });
+    const latestBlockDataRef = useRef(null);
+
+    const pushHistoryEntry = (nextData) => {
+        setHistoryState((prev) => {
+            const base = prev.stack.slice(0, prev.index + 1);
+            let nextStack = [...base, cloneBlockData(nextData)];
+            if (nextStack.length > 120) {
+                nextStack = nextStack.slice(nextStack.length - 120);
+            }
+
+            return {
+                stack: nextStack,
+                index: nextStack.length - 1,
+            };
+        });
+    };
+
+    const updateBlockData = (mutator, { recordHistory = true } = {}) => {
+        const prev = latestBlockDataRef.current;
+        if (!prev) {
+            return false;
+        }
+
+        const draft = cloneBlockData(prev);
+        const next = mutator(draft);
+        if (!next) {
+            return false;
+        }
+
+        if (blockDataEquals(prev, next)) {
+            return false;
+        }
+
+        latestBlockDataRef.current = next;
+        setBlockData(next);
+        if (recordHistory) {
+            pushHistoryEntry(next);
+        }
+        return true;
+    };
+
+    const finishDrawing = () => {
+        if (!drawState.current.drawing) {
+            return;
+        }
+
+        if (drawState.current.changed && latestBlockDataRef.current) {
+            pushHistoryEntry(latestBlockDataRef.current);
+        }
+
+        drawState.current = { drawing: false, changed: false, lastKey: null };
+    };
 
     useEffect(() => {
         const load = async () => {
@@ -138,6 +207,12 @@ export default function Project({ projectId }) {
 
                 setProject(projectData);
                 setBlockData(normalized);
+                latestBlockDataRef.current = normalized;
+                setHistoryState({
+                    stack: [cloneBlockData(normalized)],
+                    index: 0,
+                });
+                setLastSavedSnapshot(JSON.stringify(normalized));
                 setCurrentZ(normalized.bounds.minZ);
                 setMasters(Array.isArray(mastersData) ? mastersData : []);
             } catch (e) {
@@ -149,6 +224,18 @@ export default function Project({ projectId }) {
 
         load();
     }, [projectId]);
+
+    useEffect(() => {
+        const endActions = () => {
+            finishDrawing();
+            dragState.current.panning = false;
+        };
+
+        window.addEventListener('mouseup', endActions);
+        return () => {
+            window.removeEventListener('mouseup', endActions);
+        };
+    }, []);
 
     const mastersById = useMemo(() => {
         const map = new Map();
@@ -180,32 +267,44 @@ export default function Project({ projectId }) {
     }, [bounds]);
 
     const placeBlock = (x, y, z) => {
-        if (!blockData) {
+        const key = coordKey(x, y, z);
+        return updateBlockData((draft) => {
+            if (selectedBlockId === null) {
+                delete draft.cells[key];
+            } else {
+                draft.cells[key] = Number(selectedBlockId);
+            }
+            return draft;
+        }, { recordHistory: false });
+    };
+
+    const startDrawingAt = (x, y, z) => {
+        drawState.current = { drawing: true, changed: false, lastKey: null };
+        const changed = placeBlock(x, y, z);
+        drawState.current.changed = changed;
+        drawState.current.lastKey = coordKey(x, y, z);
+    };
+
+    const drawAt = (x, y, z) => {
+        if (!drawState.current.drawing) {
             return;
         }
 
         const key = coordKey(x, y, z);
-        setBlockData((prev) => {
-            const nextCells = { ...prev.cells };
-            if (selectedBlockId === null) {
-                delete nextCells[key];
-            } else {
-                nextCells[key] = Number(selectedBlockId);
-            }
-            return {
-                ...prev,
-                cells: nextCells,
-            };
-        });
-    };
-
-    const adjustBound = (direction, mode) => {
-        if (!blockData) {
+        if (drawState.current.lastKey === key) {
             return;
         }
 
-        setBlockData((prev) => {
-            const nextBounds = { ...prev.bounds };
+        const changed = placeBlock(x, y, z);
+        if (changed) {
+            drawState.current.changed = true;
+            drawState.current.lastKey = key;
+        }
+    };
+
+    const adjustBound = (direction, mode) => {
+        updateBlockData((draft) => {
+            const nextBounds = { ...draft.bounds };
 
             if (direction === 'minX') {
                 nextBounds.minX += mode === 'expand' ? -1 : 1;
@@ -227,11 +326,11 @@ export default function Project({ projectId }) {
             }
 
             if (nextBounds.minX > nextBounds.maxX || nextBounds.minY > nextBounds.maxY || nextBounds.minZ > nextBounds.maxZ) {
-                return prev;
+                return draft;
             }
 
             const filteredCells = {};
-            Object.entries(prev.cells).forEach(([key, blockId]) => {
+            Object.entries(draft.cells).forEach(([key, blockId]) => {
                 const [x, y, z] = key.split(',').map(Number);
                 if (
                     x >= nextBounds.minX && x <= nextBounds.maxX &&
@@ -244,11 +343,9 @@ export default function Project({ projectId }) {
 
             setCurrentZ((prevZ) => Math.min(nextBounds.maxZ, Math.max(nextBounds.minZ, prevZ)));
 
-            return {
-                ...prev,
-                bounds: nextBounds,
-                cells: filteredCells,
-            };
+            draft.bounds = nextBounds;
+            draft.cells = filteredCells;
+            return draft;
         });
     };
 
@@ -264,6 +361,12 @@ export default function Project({ projectId }) {
     };
 
     const onPanStart = (e) => {
+        if (!(e.shiftKey || e.button === 1)) {
+            return;
+        }
+
+        e.preventDefault();
+        finishDrawing();
         dragState.current = {
             panning: true,
             lastX: e.clientX,
@@ -292,14 +395,93 @@ export default function Project({ projectId }) {
         dragState.current.panning = false;
     };
 
-    const saveProject = async () => {
-        if (!blockData) {
-            return;
+    const undo = () => {
+        setHistoryState((prev) => {
+            if (prev.index <= 0) {
+                return prev;
+            }
+
+            const nextIndex = prev.index - 1;
+            const nextData = cloneBlockData(prev.stack[nextIndex]);
+            latestBlockDataRef.current = nextData;
+            setBlockData(nextData);
+            return {
+                ...prev,
+                index: nextIndex,
+            };
+        });
+    };
+
+    const redo = () => {
+        setHistoryState((prev) => {
+            if (prev.index >= prev.stack.length - 1) {
+                return prev;
+            }
+
+            const nextIndex = prev.index + 1;
+            const nextData = cloneBlockData(prev.stack[nextIndex]);
+            latestBlockDataRef.current = nextData;
+            setBlockData(nextData);
+            return {
+                ...prev,
+                index: nextIndex,
+            };
+        });
+    };
+
+    const canUndo = historyState.index > 0;
+    const canRedo = historyState.index >= 0 && historyState.index < historyState.stack.length - 1;
+
+    useEffect(() => {
+        const onKeyDown = (event) => {
+            if (!(event.ctrlKey || event.metaKey) || isEditableElement(event.target)) {
+                return;
+            }
+
+            const key = event.key.toLowerCase();
+            if (key === 'z') {
+                event.preventDefault();
+                if (event.shiftKey) {
+                    if (canRedo) {
+                        redo();
+                    }
+                    return;
+                }
+
+                if (canUndo) {
+                    undo();
+                }
+                return;
+            }
+
+            if (key === 'y') {
+                event.preventDefault();
+                if (canRedo) {
+                    redo();
+                }
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown);
+        return () => {
+            window.removeEventListener('keydown', onKeyDown);
+        };
+    }, [canUndo, canRedo]);
+
+    const blockDataSnapshot = useMemo(() => JSON.stringify(blockData ?? {}), [blockData]);
+    const isDirty = !!blockData && blockDataSnapshot !== lastSavedSnapshot;
+
+    const saveProject = async ({ silent = false } = {}) => {
+        const currentData = latestBlockDataRef.current;
+        if (!currentData) {
+            return false;
         }
 
         setSaving(true);
-        setError('');
-        setSuccess('');
+        if (!silent) {
+            setError('');
+            setSuccess('');
+        }
 
         try {
             const response = await fetch(`/api/projects/${projectId}`, {
@@ -307,20 +489,45 @@ export default function Project({ projectId }) {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ block_data: blockData }),
+                body: JSON.stringify({ block_data: currentData }),
             });
 
             if (!response.ok) {
                 throw new Error('保存に失敗しました');
             }
 
-            setSuccess('ブロック配置を保存しました');
+            const nextSnapshot = JSON.stringify(currentData);
+            setLastSavedSnapshot(nextSnapshot);
+
+            if (silent) {
+                const now = new Date();
+                const hh = String(now.getHours()).padStart(2, '0');
+                const mm = String(now.getMinutes()).padStart(2, '0');
+                const ss = String(now.getSeconds()).padStart(2, '0');
+                setAutoSaveMessage(`自動保存: ${hh}:${mm}:${ss}`);
+            } else {
+                setSuccess('ブロック配置を保存しました');
+            }
+            return true;
         } catch (e) {
             setError(e.message);
+            return false;
         } finally {
             setSaving(false);
         }
     };
+
+    useEffect(() => {
+        if (!blockData || loading || saving || !isDirty) {
+            return undefined;
+        }
+
+        const timer = setTimeout(() => {
+            saveProject({ silent: true });
+        }, AUTOSAVE_DELAY_MS);
+
+        return () => clearTimeout(timer);
+    }, [blockData, loading, saving, isDirty]);
 
     const renderPlane = (z, { clickable, title, compact = false }) => {
         const size = compact ? 18 : CELL_PX;
@@ -345,14 +552,25 @@ export default function Project({ projectId }) {
                         const isCurrentLayer = z === currentZ;
                         const blockColor = block?.color ?? null;
                         const showStrongBorder = blockColor ? isLightHexColor(blockColor) : false;
+                        const isGuideLine = !!hoverCoord && (x === hoverCoord.x || y === hoverCoord.y);
+                        const isGuidePoint = !!hoverCoord && (x === hoverCoord.x && y === hoverCoord.y);
+                        const isAdjacentPlane = z !== currentZ;
                         return (
                             <Box
                                 key={`${x}-${y}-${z}`}
-                                onClick={() => {
-                                    if (!clickable || dragState.current.moved) {
+                                onMouseDown={(e) => {
+                                    if (!clickable || e.button !== 0) {
                                         return;
                                     }
-                                    placeBlock(x, y, z);
+                                    e.stopPropagation();
+                                    startDrawingAt(x, y, z);
+                                    setHoverCoord({ x, y });
+                                }}
+                                onMouseEnter={() => {
+                                    if (clickable) {
+                                        setHoverCoord({ x, y });
+                                        drawAt(x, y, z);
+                                    }
                                 }}
                                 title={`x:${x}, y:${y}, z:${z}`}
                                 sx={{
@@ -361,7 +579,11 @@ export default function Project({ projectId }) {
                                     background: blockColor ? blockColor : CHECKER_BG,
                                     opacity: block ? Math.max(0.1, Number(block.opacity ?? 100) / 100) : 1,
                                     border: isCurrentLayer ? '1px solid #2563eb' : '1px solid #cbd5e1',
-                                    boxShadow: showStrongBorder ? 'inset 0 0 0 1px #334155' : 'none',
+                                    boxShadow: [
+                                        showStrongBorder ? 'inset 0 0 0 1px #334155' : null,
+                                        isGuideLine ? 'inset 0 0 0 1px rgba(37, 99, 235, 0.45)' : null,
+                                        isGuidePoint ? (isAdjacentPlane ? '0 0 0 2px rgba(217, 70, 239, 0.95) inset' : '0 0 0 2px rgba(37, 99, 235, 0.95) inset') : null,
+                                    ].filter(Boolean).join(', '),
                                     cursor: clickable ? 'pointer' : 'default',
                                 }}
                             />
@@ -402,14 +624,21 @@ export default function Project({ projectId }) {
                         <Typography variant="body2" color="text.secondary">
                             プロジェクトID: {project.id}
                         </Typography>
+                        {autoSaveMessage && (
+                            <Typography variant="caption" color="text.secondary">
+                                {autoSaveMessage}
+                            </Typography>
+                        )}
                     </Box>
+                    <Button variant="outlined" onClick={undo} disabled={!canUndo}>Undo</Button>
+                    <Button variant="outlined" onClick={redo} disabled={!canRedo}>Redo</Button>
                     <Button
                         variant="contained"
                         startIcon={<SaveIcon />}
                         onClick={saveProject}
                         disabled={saving}
                     >
-                        保存
+                        {saving ? '保存中...' : '保存'}
                     </Button>
                 </Box>
 
@@ -481,81 +710,94 @@ export default function Project({ projectId }) {
                     </Typography>
                 </Card>
 
-                <Card sx={{ p: 2 }}>
-                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                        <Typography variant="subtitle1">Zレイヤー</Typography>
-                        <IconButton
-                            size="small"
-                            onClick={() => setCurrentZ((z) => Math.max(bounds.minZ, z - 1))}
-                            disabled={currentZ <= bounds.minZ}
-                        >
-                            <ExpandMoreIcon />
-                        </IconButton>
-                        <Typography>現在: {currentZ}</Typography>
-                        <IconButton
-                            size="small"
-                            onClick={() => setCurrentZ((z) => Math.min(bounds.maxZ, z + 1))}
-                            disabled={currentZ >= bounds.maxZ}
-                        >
-                            <ExpandLessIcon />
-                        </IconButton>
+                <Box
+                    sx={{
+                        display: 'grid',
+                        gridTemplateColumns: { xs: '1fr', lg: '7fr 3fr' },
+                        gap: 2,
+                        alignItems: 'start',
+                    }}
+                >
+                    <Card sx={{ p: 2 }}>
+                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                            <Typography variant="subtitle1">Zレイヤー</Typography>
+                            <IconButton
+                                size="small"
+                                onClick={() => setCurrentZ((z) => Math.max(bounds.minZ, z - 1))}
+                                disabled={currentZ <= bounds.minZ}
+                            >
+                                <ExpandMoreIcon />
+                            </IconButton>
+                            <Typography>現在: {currentZ}</Typography>
+                            <IconButton
+                                size="small"
+                                onClick={() => setCurrentZ((z) => Math.min(bounds.maxZ, z + 1))}
+                                disabled={currentZ >= bounds.maxZ}
+                            >
+                                <ExpandLessIcon />
+                            </IconButton>
 
-                        <Divider orientation="vertical" flexItem />
+                            <Divider orientation="vertical" flexItem />
 
-                        <Typography variant="body2">ズーム</Typography>
-                        <IconButton size="small" onClick={() => setScale((s) => Math.max(MIN_SCALE, Number((s - 0.1).toFixed(2))))}>
-                            <ZoomOutIcon />
-                        </IconButton>
-                        <Typography variant="body2">{Math.round(scale * 100)}%</Typography>
-                        <IconButton size="small" onClick={() => setScale((s) => Math.min(MAX_SCALE, Number((s + 0.1).toFixed(2))))}>
-                            <ZoomInIcon />
-                        </IconButton>
-                    </Stack>
+                            <Typography variant="body2">ズーム</Typography>
+                            <IconButton size="small" onClick={() => setScale((s) => Math.max(MIN_SCALE, Number((s - 0.1).toFixed(2))))}>
+                                <ZoomOutIcon />
+                            </IconButton>
+                            <Typography variant="body2">{Math.round(scale * 100)}%</Typography>
+                            <IconButton size="small" onClick={() => setScale((s) => Math.min(MAX_SCALE, Number((s + 0.1).toFixed(2))))}>
+                                <ZoomInIcon />
+                            </IconButton>
+                            <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                                Shift+ドラッグ で画面移動 / 左ドラッグ で連続配置
+                            </Typography>
+                        </Stack>
 
-                    <Box
-                        onWheel={onWheel}
-                        onMouseDown={onPanStart}
-                        onMouseMove={onPanMove}
-                        onMouseUp={onPanEnd}
-                        onMouseLeave={onPanEnd}
-                        sx={{
-                            overflow: 'hidden',
-                            border: '1px solid #d0d7de',
-                            borderRadius: 1,
-                            backgroundColor: '#f8fafc',
-                            height: 520,
-                            cursor: dragState.current.panning ? 'grabbing' : 'grab',
-                        }}
-                    >
                         <Box
+                            onWheel={onWheel}
+                            onMouseDown={onPanStart}
+                            onMouseMove={onPanMove}
+                            onMouseUp={onPanEnd}
+                            onMouseLeave={onPanEnd}
+                            onMouseDownCapture={() => setHoverCoord(null)}
                             sx={{
-                                transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-                                transformOrigin: '0 0',
-                                p: 2,
-                                width: 'fit-content',
+                                overflow: 'hidden',
+                                border: '1px solid #d0d7de',
+                                borderRadius: 1,
+                                backgroundColor: '#f8fafc',
+                                height: 520,
+                                cursor: dragState.current.panning ? 'grabbing' : 'default',
                             }}
                         >
-                            {renderPlane(currentZ, { clickable: true, title: `現在の平面 (Z=${currentZ})` })}
+                            <Box
+                                sx={{
+                                    transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+                                    transformOrigin: '0 0',
+                                    p: 2,
+                                    width: 'fit-content',
+                                }}
+                            >
+                                {renderPlane(currentZ, { clickable: true, title: `現在の平面 (Z=${currentZ})` })}
+                            </Box>
                         </Box>
-                    </Box>
-                </Card>
+                    </Card>
 
-                <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <Box sx={{ flex: 1 }}>
-                        {renderPlane(currentZ + 1, {
-                            clickable: false,
-                            title: `上の平面 (Z=${currentZ + 1})`,
-                            compact: true,
-                        })}
-                    </Box>
-                    <Box sx={{ flex: 1 }}>
-                        {renderPlane(currentZ - 1, {
-                            clickable: false,
-                            title: `下の平面 (Z=${currentZ - 1})`,
-                            compact: true,
-                        })}
-                    </Box>
-                </Stack>
+                    <Stack spacing={2}>
+                        <Box>
+                            {renderPlane(currentZ + 1, {
+                                clickable: false,
+                                title: `上の平面 (Z=${currentZ + 1})`,
+                                compact: true,
+                            })}
+                        </Box>
+                        <Box>
+                            {renderPlane(currentZ - 1, {
+                                clickable: false,
+                                title: `下の平面 (Z=${currentZ - 1})`,
+                                compact: true,
+                            })}
+                        </Box>
+                    </Stack>
+                </Box>
             </Stack>
         </Container>
     );
