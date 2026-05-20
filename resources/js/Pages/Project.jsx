@@ -34,6 +34,8 @@ const PREVIEW_VIEWPORT_PX = 300;
 const PREVIEW_BASE_CELL_PX = 16;
 const TARGET_VISIBLE_CELLS = 20;
 const GRID_GAP_PX = 1;
+const EDIT_WINDOW_CELLS = 50;
+const MINIMAP_PX = 220;
 const CHECKER_BG =
     'repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px';
 
@@ -99,6 +101,7 @@ const coordKey = (x, y, z) => `${x},${y},${z}`;
 
 const cloneBlockData = (data) => JSON.parse(JSON.stringify(data));
 const blockDataEquals = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const isEditableElement = (target) => {
     if (!target || !(target instanceof HTMLElement)) {
         return false;
@@ -182,6 +185,7 @@ export default function Project({ projectId }) {
     const [masters, setMasters] = useState([]);
     const [selectedBlockId, setSelectedBlockId] = useState(null);
     const [hoverCoord, setHoverCoord] = useState(null);
+    const [viewOrigin, setViewOrigin] = useState({ x: 0, y: 0 });
     const [currentZ, setCurrentZ] = useState(0);
     const [scale, setScale] = useState(1);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -197,6 +201,7 @@ export default function Project({ projectId }) {
     const drawState = useRef({ drawing: false, changed: false, lastKey: null });
     const latestBlockDataRef = useRef(null);
     const mainViewportRef = useRef(null);
+    const minimapCanvasRef = useRef(null);
     const hasInitializedViewportRef = useRef(false);
 
     const pushHistoryEntry = (nextData) => {
@@ -281,6 +286,7 @@ export default function Project({ projectId }) {
                 });
                 setLastSavedSnapshot(JSON.stringify(normalized));
                 setCurrentZ(normalized.bounds.minZ);
+                setViewOrigin({ x: normalized.bounds.minX, y: normalized.bounds.minY });
                 setMasters(Array.isArray(mastersData) ? mastersData : []);
                 hasInitializedViewportRef.current = false;
             } catch (e) {
@@ -333,6 +339,79 @@ export default function Project({ projectId }) {
         }
         return arr;
     }, [bounds]);
+
+    const totalXCells = xList.length;
+    const totalYCells = yList.length;
+    const maxOriginX = bounds ? Math.max(bounds.minX, bounds.maxX - EDIT_WINDOW_CELLS + 1) : 0;
+    const maxOriginY = bounds ? Math.max(bounds.minY, bounds.maxY - EDIT_WINDOW_CELLS + 1) : 0;
+
+    useEffect(() => {
+        if (!bounds) {
+            return;
+        }
+
+        setViewOrigin((prev) => ({
+            x: clamp(prev.x, bounds.minX, maxOriginX),
+            y: clamp(prev.y, bounds.minY, maxOriginY),
+        }));
+    }, [bounds, maxOriginX, maxOriginY]);
+
+    const visibleXList = useMemo(() => {
+        if (!bounds) {
+            return [];
+        }
+
+        const start = clamp(viewOrigin.x, bounds.minX, maxOriginX);
+        const end = Math.min(bounds.maxX, start + EDIT_WINDOW_CELLS - 1);
+        const arr = [];
+        for (let x = start; x <= end; x += 1) {
+            arr.push(x);
+        }
+        return arr;
+    }, [bounds, viewOrigin.x, maxOriginX]);
+
+    const visibleYList = useMemo(() => {
+        if (!bounds) {
+            return [];
+        }
+
+        const start = clamp(viewOrigin.y, bounds.minY, maxOriginY);
+        const end = Math.min(bounds.maxY, start + EDIT_WINDOW_CELLS - 1);
+        const arr = [];
+        for (let y = start; y <= end; y += 1) {
+            arr.push(y);
+        }
+        return arr;
+    }, [bounds, viewOrigin.y, maxOriginY]);
+
+    const chunkCountX = bounds ? Math.ceil(totalXCells / EDIT_WINDOW_CELLS) : 0;
+    const chunkCountY = bounds ? Math.ceil(totalYCells / EDIT_WINDOW_CELLS) : 0;
+    const activeChunkX = bounds ? Math.floor((viewOrigin.x - bounds.minX) / EDIT_WINDOW_CELLS) : 0;
+    const activeChunkY = bounds ? Math.floor((viewOrigin.y - bounds.minY) / EDIT_WINDOW_CELLS) : 0;
+
+    const moveChunk = (dx, dy) => {
+        if (!bounds) {
+            return;
+        }
+
+        setViewOrigin((prev) => ({
+            x: clamp(prev.x + (dx * EDIT_WINDOW_CELLS), bounds.minX, maxOriginX),
+            y: clamp(prev.y + (dy * EDIT_WINDOW_CELLS), bounds.minY, maxOriginY),
+        }));
+    };
+
+    const jumpToChunk = (chunkX, chunkY) => {
+        if (!bounds) {
+            return;
+        }
+
+        const targetX = bounds.minX + (chunkX * EDIT_WINDOW_CELLS);
+        const targetY = bounds.minY + (chunkY * EDIT_WINDOW_CELLS);
+        setViewOrigin({
+            x: clamp(targetX, bounds.minX, maxOriginX),
+            y: clamp(targetY, bounds.minY, maxOriginY),
+        });
+    };
 
     useEffect(() => {
         if (loading || !bounds || !mainViewportRef.current || hasInitializedViewportRef.current) {
@@ -636,48 +715,96 @@ export default function Project({ projectId }) {
         return () => clearTimeout(timer);
     }, [blockData, loading, saving, isDirty]);
 
-    const renderPlane = (z, { clickable, title, compact = false }) => {
-        const shouldUseHoverGuide = (xList.length * yList.length) <= 2500;
-        const size = compact ? PREVIEW_BASE_CELL_PX : CELL_PX;
-        const stepPx = CELL_PX + GRID_GAP_PX;
-
-        let renderXList = xList;
-        let renderYList = yList;
-        let compactShiftX = 0;
-        let compactShiftY = 0;
-
-        if (compact && bounds && mainViewportRef.current) {
-            const viewportW = Math.max(1, mainViewportRef.current.clientWidth);
-            const viewportH = Math.max(1, mainViewportRef.current.clientHeight);
-            const safeScale = Math.max(0.01, scale);
-
-            const left = (-offset.x) / stepPx;
-            const top = (-offset.y) / stepPx;
-            const right = ((viewportW / safeScale) - offset.x) / stepPx;
-            const bottom = ((viewportH / safeScale) - offset.y) / stepPx;
-
-            const startX = Math.max(bounds.minX, Math.floor(left) - 1);
-            const endX = Math.min(bounds.maxX, Math.ceil(right) + 1);
-            const startY = Math.max(bounds.minY, Math.floor(top) - 1);
-            const endY = Math.min(bounds.maxY, Math.ceil(bottom) + 1);
-
-            const nextX = [];
-            for (let x = startX; x <= endX; x += 1) {
-                nextX.push(x);
-            }
-            const nextY = [];
-            for (let y = startY; y <= endY; y += 1) {
-                nextY.push(y);
-            }
-
-            renderXList = nextX;
-            renderYList = nextY;
-
-            const fracX = left - Math.floor(left);
-            const fracY = top - Math.floor(top);
-            compactShiftX = -(fracX * (PREVIEW_BASE_CELL_PX + GRID_GAP_PX));
-            compactShiftY = -(fracY * (PREVIEW_BASE_CELL_PX + GRID_GAP_PX));
+    useEffect(() => {
+        if (!bounds || !minimapCanvasRef.current) {
+            return;
         }
+
+        const canvas = minimapCanvasRef.current;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            return;
+        }
+
+        const width = MINIMAP_PX;
+        const height = MINIMAP_PX;
+        canvas.width = width;
+        canvas.height = height;
+
+        const rangeX = Math.max(1, bounds.maxX - bounds.minX + 1);
+        const rangeY = Math.max(1, bounds.maxY - bounds.minY + 1);
+        const scaleX = width / rangeX;
+        const scaleY = height / rangeY;
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillRect(0, 0, width, height);
+
+        Object.entries(blockData?.cells ?? {}).forEach(([key, blockId]) => {
+            const [x, y, z] = key.split(',').map(Number);
+            if (z !== currentZ) {
+                return;
+            }
+
+            const master = mastersById.get(Number(blockId));
+            const px = Math.floor((x - bounds.minX) * scaleX);
+            const py = Math.floor((y - bounds.minY) * scaleY);
+            const pw = Math.max(1, Math.ceil(scaleX));
+            const ph = Math.max(1, Math.ceil(scaleY));
+
+            ctx.fillStyle = master?.color ?? '#64748b';
+            ctx.globalAlpha = Math.max(0.2, Number(master?.opacity ?? 100) / 100);
+            ctx.fillRect(px, py, pw, ph);
+            ctx.globalAlpha = 1;
+        });
+
+        const visibleMinX = visibleXList[0] ?? bounds.minX;
+        const visibleMaxX = visibleXList[visibleXList.length - 1] ?? bounds.minX;
+        const visibleMinY = visibleYList[0] ?? bounds.minY;
+        const visibleMaxY = visibleYList[visibleYList.length - 1] ?? bounds.minY;
+
+        const rectX = Math.floor((visibleMinX - bounds.minX) * scaleX);
+        const rectY = Math.floor((visibleMinY - bounds.minY) * scaleY);
+        const rectW = Math.max(2, Math.ceil((visibleMaxX - visibleMinX + 1) * scaleX));
+        const rectH = Math.max(2, Math.ceil((visibleMaxY - visibleMinY + 1) * scaleY));
+
+        ctx.strokeStyle = '#2563eb';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rectX, rectY, rectW, rectH);
+    }, [bounds, blockData, mastersById, currentZ, visibleXList, visibleYList]);
+
+    const handleMinimapClick = (event) => {
+        if (!bounds || !minimapCanvasRef.current) {
+            return;
+        }
+
+        const rect = minimapCanvasRef.current.getBoundingClientRect();
+        const clickX = event.clientX - rect.left;
+        const clickY = event.clientY - rect.top;
+
+        const rangeX = Math.max(1, bounds.maxX - bounds.minX + 1);
+        const rangeY = Math.max(1, bounds.maxY - bounds.minY + 1);
+        const worldX = bounds.minX + Math.floor((clickX / rect.width) * rangeX);
+        const worldY = bounds.minY + Math.floor((clickY / rect.height) * rangeY);
+
+        const halfWindow = Math.floor(EDIT_WINDOW_CELLS / 2);
+        setViewOrigin({
+            x: clamp(worldX - halfWindow, bounds.minX, maxOriginX),
+            y: clamp(worldY - halfWindow, bounds.minY, maxOriginY),
+        });
+    };
+
+    const renderPlane = (z, { clickable, title, compact = false }) => {
+        const sourceXList = visibleXList;
+        const sourceYList = visibleYList;
+        const shouldUseHoverGuide = (sourceXList.length * sourceYList.length) <= 2500;
+        const size = compact ? PREVIEW_BASE_CELL_PX : CELL_PX;
+        const previewTranslateRatio = PREVIEW_BASE_CELL_PX / CELL_PX;
+        const compactShiftX = compact ? offset.x * previewTranslateRatio : 0;
+        const compactShiftY = compact ? offset.y * previewTranslateRatio : 0;
+        const compactScale = compact ? scale : 1;
 
         return (
             <Card sx={{ p: 1.5 }}>
@@ -697,20 +824,22 @@ export default function Project({ projectId }) {
                 >
                     <Box
                         sx={{
-                            transform: compact ? `translate(${compactShiftX}px, ${compactShiftY}px)` : 'none',
+                            transform: compact
+                                ? `translate(${compactShiftX}px, ${compactShiftY}px) scale(${compactScale})`
+                                : 'none',
                             transformOrigin: '0 0',
                             position: compact ? 'absolute' : 'static',
                             top: compact ? 0 : 'auto',
                             left: compact ? 0 : 'auto',
                             display: 'grid',
-                            gridTemplateColumns: `repeat(${renderXList.length}, ${size}px)`,
+                            gridTemplateColumns: `repeat(${sourceXList.length}, ${size}px)`,
                             gap: `${GRID_GAP_PX}px`,
                             backgroundColor: '#cbd5e1',
                             border: '1px solid #94a3b8',
                             width: 'fit-content',
                         }}
                     >
-                        {renderYList.map((y) => renderXList.map((x) => {
+                        {sourceYList.map((y) => sourceXList.map((x) => {
                             const block = getBlockForCell(x, y, z);
                             const isCurrentLayer = z === currentZ;
                             const blockColor = block?.color ?? null;
@@ -918,6 +1047,9 @@ export default function Project({ projectId }) {
                             <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
                                 Shift+ドラッグ で画面移動 / 左ドラッグ で連続配置
                             </Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                                表示範囲: X({visibleXList[0]}..{visibleXList[visibleXList.length - 1]}) Y({visibleYList[0]}..{visibleYList[visibleYList.length - 1]})
+                            </Typography>
                         </Stack>
 
                         <Box
@@ -951,6 +1083,66 @@ export default function Project({ projectId }) {
                     </Card>
 
                     <Stack spacing={2} sx={{ minWidth: 0 }}>
+                        <Card sx={{ p: 1.5 }}>
+                            <Typography variant="subtitle2" sx={{ mb: 1 }}>エリアナビ (50x50)</Typography>
+                            <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+                                <Button size="small" onClick={() => moveChunk(-1, 0)}>←</Button>
+                                <Button size="small" onClick={() => moveChunk(1, 0)}>→</Button>
+                                <Button size="small" onClick={() => moveChunk(0, -1)}>↑</Button>
+                                <Button size="small" onClick={() => moveChunk(0, 1)}>↓</Button>
+                                <Typography variant="caption" sx={{ alignSelf: 'center' }}>
+                                    チャンク {activeChunkX + 1}/{Math.max(1, chunkCountX)} , {activeChunkY + 1}/{Math.max(1, chunkCountY)}
+                                </Typography>
+                            </Stack>
+                            <Box
+                                sx={{
+                                    display: 'grid',
+                                    gridTemplateColumns: `repeat(${Math.max(1, chunkCountX)}, minmax(18px, 1fr))`,
+                                    gap: '4px',
+                                    mb: 1,
+                                }}
+                            >
+                                {Array.from({ length: Math.max(1, chunkCountX * chunkCountY) }).map((_, idx) => {
+                                    const cx = idx % Math.max(1, chunkCountX);
+                                    const cy = Math.floor(idx / Math.max(1, chunkCountX));
+                                    const active = cx === activeChunkX && cy === activeChunkY;
+                                    return (
+                                        <Button
+                                            key={`chunk-${cx}-${cy}`}
+                                            size="small"
+                                            variant={active ? 'contained' : 'outlined'}
+                                            onClick={() => jumpToChunk(cx, cy)}
+                                            sx={{ minWidth: 0, p: 0.5, fontSize: '0.65rem' }}
+                                        >
+                                            {cx + 1}-{cy + 1}
+                                        </Button>
+                                    );
+                                })}
+                            </Box>
+                            <Box
+                                sx={{
+                                    border: '1px solid #cbd5e1',
+                                    borderRadius: 1,
+                                    width: MINIMAP_PX,
+                                    height: MINIMAP_PX,
+                                    overflow: 'hidden',
+                                    mx: 'auto',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                <canvas
+                                    ref={minimapCanvasRef}
+                                    width={MINIMAP_PX}
+                                    height={MINIMAP_PX}
+                                    onClick={handleMinimapClick}
+                                    style={{ display: 'block', width: `${MINIMAP_PX}px`, height: `${MINIMAP_PX}px` }}
+                                />
+                            </Box>
+                            <Typography variant="caption" color="text.secondary">
+                                ミニマップクリックで該当地点へジャンプ
+                            </Typography>
+                        </Card>
+
                         <Card sx={{ p: 1.5 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
                                 <Typography variant="subtitle2">3Dプレビュー</Typography>
