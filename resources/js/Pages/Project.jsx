@@ -11,6 +11,7 @@ import {
     Divider,
     IconButton,
     Stack,
+    TextField,
     Typography,
 } from '@mui/material';
 import {
@@ -212,6 +213,7 @@ export default function Project({ projectId }) {
     const [isRangeFillMode, setIsRangeFillMode] = useState(false);
     const [rangeFillAnchor, setRangeFillAnchor] = useState(null);
     const [isBucketFillMode, setIsBucketFillMode] = useState(false);
+    const [copySourceZ, setCopySourceZ] = useState(0);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
@@ -304,6 +306,7 @@ export default function Project({ projectId }) {
                 });
                 setLastSavedSnapshot(JSON.stringify(normalized));
                 setCurrentZ(normalized.bounds.minZ);
+                setCopySourceZ(normalized.bounds.minZ);
                 setViewOrigin({ x: normalized.bounds.minX, y: normalized.bounds.minY });
                 setMasters(Array.isArray(mastersData) ? mastersData : []);
                 hasInitializedViewportRef.current = false;
@@ -372,6 +375,8 @@ export default function Project({ projectId }) {
             x: clamp(prev.x, bounds.minX, maxOriginX),
             y: clamp(prev.y, bounds.minY, maxOriginY),
         }));
+
+        setCopySourceZ((prev) => clamp(Number(prev), bounds.minZ, bounds.maxZ));
     }, [bounds, maxOriginX, maxOriginY]);
 
     const visibleXList = useMemo(() => {
@@ -545,6 +550,53 @@ export default function Project({ projectId }) {
             draft.cells = nextCells;
             return draft;
         });
+    };
+
+    const copyPlaneToCurrent = () => {
+        if (!bounds) {
+            return;
+        }
+
+        const sourceZ = clamp(Number(copySourceZ), bounds.minZ, bounds.maxZ);
+
+        if (sourceZ === currentZ) {
+            setError('');
+            setSuccess(`コピー元とコピー先が同じ層です (Z=${currentZ})`);
+            return;
+        }
+
+        finishDrawing();
+        cancelRangeFillMode();
+        cancelBucketFillMode();
+
+        const changed = updateBlockData((draft) => {
+            const nextCells = {};
+            const copiedCells = [];
+
+            Object.entries(draft.cells).forEach(([key, blockId]) => {
+                const [x, y, z] = key.split(',').map(Number);
+                if (z !== currentZ) {
+                    nextCells[key] = blockId;
+                }
+                if (z === sourceZ) {
+                    copiedCells.push({ x, y, blockId });
+                }
+            });
+
+            copiedCells.forEach(({ x, y, blockId }) => {
+                nextCells[coordKey(x, y, currentZ)] = blockId;
+            });
+
+            draft.cells = nextCells;
+            return draft;
+        });
+
+        setError('');
+        if (changed) {
+            setSuccess(`Z=${sourceZ} を Z=${currentZ} にコピーしました`);
+        } else {
+            setSuccess(`Z=${sourceZ} と Z=${currentZ} は同じ配置のため変更はありません`);
+        }
     };
 
     const fillRectangleOnCurrentPlane = (start, end) => {
@@ -1265,6 +1317,32 @@ export default function Project({ projectId }) {
                                         現在のZ平面で、クリック位置から同じ種類（空白含む）で連結した領域を塗りつぶします
                                     </Typography>
                                 )}
+                                <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+                                    <TextField
+                                        size="small"
+                                        type="number"
+                                        label="コピー元Z"
+                                        value={copySourceZ}
+                                        onChange={(e) => {
+                                            const next = Number(e.target.value);
+                                            if (Number.isFinite(next)) {
+                                                setCopySourceZ(next);
+                                            }
+                                        }}
+                                        inputProps={{
+                                            min: bounds.minZ,
+                                            max: bounds.maxZ,
+                                            step: 1,
+                                        }}
+                                        sx={{ width: 140 }}
+                                    />
+                                    <Button size="small" variant="outlined" onClick={copyPlaneToCurrent}>
+                                        現在平面へコピー
+                                    </Button>
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                                    コピー先は現在の平面 (Z={currentZ}) です
+                                </Typography>
                                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
                                     ここにショートカット・変換ツール・定型配置などを追加できます
                                 </Typography>
