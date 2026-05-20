@@ -33,6 +33,7 @@ const AUTOSAVE_DELAY_MS = 8000;
 const PREVIEW_VIEWPORT_PX = 300;
 const PREVIEW_BASE_CELL_PX = 16;
 const TARGET_VISIBLE_CELLS = 20;
+const GRID_GAP_PX = 1;
 const CHECKER_BG =
     'repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px';
 
@@ -493,7 +494,8 @@ export default function Project({ projectId }) {
 
         dragState.current.lastX = e.clientX;
         dragState.current.lastY = e.clientY;
-        setOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+        const adjust = 1 / Math.max(0.35, scale);
+        setOffset((prev) => ({ x: prev.x + (dx * adjust), y: prev.y + (dy * adjust) }));
     };
 
     const onPanEnd = () => {
@@ -635,11 +637,47 @@ export default function Project({ projectId }) {
     }, [blockData, loading, saving, isDirty]);
 
     const renderPlane = (z, { clickable, title, compact = false }) => {
+        const shouldUseHoverGuide = (xList.length * yList.length) <= 2500;
         const size = compact ? PREVIEW_BASE_CELL_PX : CELL_PX;
-        const previewTranslateRatio = PREVIEW_BASE_CELL_PX / CELL_PX;
-        const syncedScale = compact ? scale : 1;
-        const syncedOffsetX = compact ? offset.x * previewTranslateRatio : 0;
-        const syncedOffsetY = compact ? offset.y * previewTranslateRatio : 0;
+        const stepPx = CELL_PX + GRID_GAP_PX;
+
+        let renderXList = xList;
+        let renderYList = yList;
+        let compactShiftX = 0;
+        let compactShiftY = 0;
+
+        if (compact && bounds && mainViewportRef.current) {
+            const viewportW = Math.max(1, mainViewportRef.current.clientWidth);
+            const viewportH = Math.max(1, mainViewportRef.current.clientHeight);
+            const safeScale = Math.max(0.01, scale);
+
+            const left = (-offset.x) / stepPx;
+            const top = (-offset.y) / stepPx;
+            const right = ((viewportW / safeScale) - offset.x) / stepPx;
+            const bottom = ((viewportH / safeScale) - offset.y) / stepPx;
+
+            const startX = Math.max(bounds.minX, Math.floor(left) - 1);
+            const endX = Math.min(bounds.maxX, Math.ceil(right) + 1);
+            const startY = Math.max(bounds.minY, Math.floor(top) - 1);
+            const endY = Math.min(bounds.maxY, Math.ceil(bottom) + 1);
+
+            const nextX = [];
+            for (let x = startX; x <= endX; x += 1) {
+                nextX.push(x);
+            }
+            const nextY = [];
+            for (let y = startY; y <= endY; y += 1) {
+                nextY.push(y);
+            }
+
+            renderXList = nextX;
+            renderYList = nextY;
+
+            const fracX = left - Math.floor(left);
+            const fracY = top - Math.floor(top);
+            compactShiftX = -(fracX * (PREVIEW_BASE_CELL_PX + GRID_GAP_PX));
+            compactShiftY = -(fracY * (PREVIEW_BASE_CELL_PX + GRID_GAP_PX));
+        }
 
         return (
             <Card sx={{ p: 1.5 }}>
@@ -659,41 +697,45 @@ export default function Project({ projectId }) {
                 >
                     <Box
                         sx={{
-                            transform: compact ? `translate(${syncedOffsetX}px, ${syncedOffsetY}px) scale(${syncedScale})` : 'none',
+                            transform: compact ? `translate(${compactShiftX}px, ${compactShiftY}px)` : 'none',
                             transformOrigin: '0 0',
                             position: compact ? 'absolute' : 'static',
                             top: compact ? 0 : 'auto',
                             left: compact ? 0 : 'auto',
                             display: 'grid',
-                            gridTemplateColumns: `repeat(${xList.length}, ${size}px)`,
-                            gap: '1px',
+                            gridTemplateColumns: `repeat(${renderXList.length}, ${size}px)`,
+                            gap: `${GRID_GAP_PX}px`,
                             backgroundColor: '#cbd5e1',
                             border: '1px solid #94a3b8',
                             width: 'fit-content',
                         }}
                     >
-                        {yList.map((y) => xList.map((x) => {
+                        {renderYList.map((y) => renderXList.map((x) => {
                             const block = getBlockForCell(x, y, z);
                             const isCurrentLayer = z === currentZ;
                             const blockColor = block?.color ?? null;
                             const showStrongBorder = blockColor ? isLightHexColor(blockColor) : false;
-                            const isGuideLine = !!hoverCoord && (x === hoverCoord.x || y === hoverCoord.y);
-                            const isGuidePoint = !!hoverCoord && (x === hoverCoord.x && y === hoverCoord.y);
+                            const isGuideLine = shouldUseHoverGuide && !!hoverCoord && (x === hoverCoord.x || y === hoverCoord.y);
+                            const isGuidePoint = shouldUseHoverGuide && !!hoverCoord && (x === hoverCoord.x && y === hoverCoord.y);
                             const isAdjacentPlane = z !== currentZ;
                             return (
                                 <Box
                                     key={`${x}-${y}-${z}`}
                                     onMouseDown={(e) => {
-                                        if (!clickable || e.button !== 0) {
+                                        if (!clickable || e.button !== 0 || e.shiftKey || dragState.current.panning) {
                                             return;
                                         }
                                         e.stopPropagation();
                                         startDrawingAt(x, y, z);
-                                        setHoverCoord({ x, y });
+                                        if (shouldUseHoverGuide) {
+                                            setHoverCoord({ x, y });
+                                        }
                                     }}
                                     onMouseEnter={() => {
                                         if (clickable) {
-                                            setHoverCoord({ x, y });
+                                            if (shouldUseHoverGuide) {
+                                                setHoverCoord({ x, y });
+                                            }
                                             drawAt(x, y, z);
                                         }
                                     }}
