@@ -13,15 +13,13 @@ class BlocksMasterSeeder extends Seeder
     public function run(): void
     {
         $blocks = [
-            ['name' => 'Stone', 'type' => 'block', 'color' => '#808080', 'opacity' => 100, 'is_decoration' => false],
-            ['name' => 'Wood', 'type' => 'block', 'color' => '#8B4513', 'opacity' => 100, 'is_decoration' => false],
-            ['name' => 'Dirt', 'type' => 'block', 'color' => '#654321', 'opacity' => 100, 'is_decoration' => false],
-            ['name' => 'Sand', 'type' => 'block', 'color' => '#C2B280', 'opacity' => 100, 'is_decoration' => false],
-            ['name' => 'Glass', 'type' => 'block', 'color' => '#87CEEB', 'opacity' => 50, 'is_decoration' => false],
+            ['name' => 'シンプルなゆか', 'type' => 'block', 'color' => '#FFFFFF', 'opacity' => 100, 'is_decoration' => false],
+            ['name' => 'しばふなゆか', 'type' => 'block', 'color' => '#83D668', 'opacity' => 100, 'is_decoration' => false],
+            ['name' => 'たがやしたつち', 'type' => 'block', 'color' => '#800000', 'opacity' => 100, 'is_decoration' => false],
+            ['name' => 'シンプルなゆか（緑）', 'type' => 'block', 'color' => '#00FF00', 'opacity' => 100, 'is_decoration' => false],
+            ['name' => 'ガラス', 'type' => 'block', 'color' => '#87CEEB', 'opacity' => 50, 'is_decoration' => false],
             // 装飾マスター
-            ['name' => 'Concrete Edge - Mini', 'type' => 'block', 'color' => '#696969', 'opacity' => 100, 'is_decoration' => true],
-            ['name' => 'Concrete Edge - Straight', 'type' => 'block', 'color' => '#696969', 'opacity' => 100, 'is_decoration' => true],
-            ['name' => 'Concrete Edge - Corner', 'type' => 'block', 'color' => '#696969', 'opacity' => 100, 'is_decoration' => true],
+            ['name' => 'コンクリートのふち', 'type' => 'block', 'color' => '#FFFFFF', 'opacity' => 100, 'is_decoration' => true],
         ];
 
         foreach ($blocks as $block) {

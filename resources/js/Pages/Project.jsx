@@ -214,6 +214,84 @@ function WalkControls() {
     return <PointerLockControls ref={controlsRef} />;
 }
 
+const groupItemsByMaterial = (items) => {
+    const groups = new Map();
+
+    items.forEach((item) => {
+        const color = String(item?.color ?? '#94a3b8').toLowerCase();
+        const opacity = Number(item?.opacity ?? 1);
+        const normalizedOpacity = Number.isFinite(opacity) ? opacity : 1;
+        const key = `${color}|${normalizedOpacity}`;
+
+        if (!groups.has(key)) {
+            groups.set(key, {
+                key,
+                color,
+                opacity: normalizedOpacity,
+                items: [],
+            });
+        }
+
+        groups.get(key).items.push(item);
+    });
+
+    return Array.from(groups.values());
+};
+
+function InstancedVoxels({ groups, boxArgs, layout = 'standard' }) {
+    const meshRefs = useRef([]);
+    const tmpObj = useMemo(() => new THREE.Object3D(), []);
+
+    useEffect(() => {
+        meshRefs.current = meshRefs.current.slice(0, groups.length);
+    }, [groups.length]);
+
+    useEffect(() => {
+        groups.forEach((group, groupIndex) => {
+            const mesh = meshRefs.current[groupIndex];
+            if (!mesh) {
+                return;
+            }
+
+            group.items.forEach((item, itemIndex) => {
+                const px = Number(item.x);
+                const py = Number(item.y);
+                const pz = Number(item.z);
+
+                if (layout === 'walk') {
+                    tmpObj.position.set(px, pz, py);
+                } else {
+                    tmpObj.position.set(px, py, pz);
+                }
+
+                tmpObj.updateMatrix();
+                mesh.setMatrixAt(itemIndex, tmpObj.matrix);
+            });
+
+            mesh.instanceMatrix.needsUpdate = true;
+        });
+    }, [groups, layout, tmpObj]);
+
+    return (
+        <>
+            {groups.map((group, groupIndex) => (
+                <instancedMesh
+                    key={group.key}
+                    ref={(el) => {
+                        if (el) {
+                            meshRefs.current[groupIndex] = el;
+                        }
+                    }}
+                    args={[null, null, group.items.length]}
+                >
+                    <boxGeometry args={boxArgs} />
+                    <meshStandardMaterial color={group.color} transparent opacity={group.opacity} />
+                </instancedMesh>
+            ))}
+        </>
+    );
+}
+
 function WalkScene({ blocks, decorations, bounds, maxBlocks }) {
     const sampledBlocks = useMemo(() => {
         if (!maxBlocks || blocks.length <= maxBlocks) return blocks;
@@ -227,6 +305,9 @@ function WalkScene({ blocks, decorations, bounds, maxBlocks }) {
         return decorations.filter((_, i) => i % step === 0);
     }, [decorations, maxBlocks]);
 
+    const groupedBlocks = useMemo(() => groupItemsByMaterial(sampledBlocks), [sampledBlocks]);
+    const groupedDecorations = useMemo(() => groupItemsByMaterial(sampledDecorations), [sampledDecorations]);
+
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerY = (bounds.minY + bounds.maxY) / 2;
     const eyeHeight = bounds.minZ + 1.5;
@@ -237,32 +318,14 @@ function WalkScene({ blocks, decorations, bounds, maxBlocks }) {
     // このシーンはThree.js標準(Y-up)で描画する
     // シーン座標(x, y, z) → Three.js座標(x, z, y) でZが高さになる
     return (
-        <Canvas camera={{ position: [centerX, eyeHeight, centerY], fov: 75, near: 0.05, far: 10000 }}>
+        <Canvas camera={{ position: [centerX, eyeHeight, centerY], fov: 75, near: 0.05, far: 10000 }} dpr={[1, 1.5]}>
             <color attach="background" args={['#87ceeb']} />
             <ambientLight intensity={0.8} />
             <directionalLight position={[100, 100, 50]} intensity={0.7} />
             <directionalLight position={[-50, 50, -30]} intensity={0.3} />
 
-            {sampledBlocks.map((block) => (
-                <mesh key={block.key} position={[block.x, block.z, block.y]}>
-                    <boxGeometry args={[1, 1, 1]} />
-                    <meshStandardMaterial color={block.color} transparent opacity={block.opacity} />
-                </mesh>
-            ))}
-
-            {sampledDecorations.map((decoration) => (
-                <mesh
-                    key={decoration.key}
-                    position={[decoration.x, decoration.z, decoration.y]}
-                >
-                    <boxGeometry args={[0.46, 0.08, 0.46]} />
-                    <meshStandardMaterial
-                        color={decoration.color}
-                        transparent
-                        opacity={decoration.opacity}
-                    />
-                </mesh>
-            ))}
+            <InstancedVoxels groups={groupedBlocks} boxArgs={[1, 1, 1]} layout="walk" />
+            <InstancedVoxels groups={groupedDecorations} boxArgs={[0.46, 0.08, 0.46]} layout="walk" />
 
             <mesh position={[centerX, groundLevel, centerY]} rotation={[-Math.PI / 2, 0, 0]}>
                 <planeGeometry args={[sizeX + 20, sizeY + 20]} />
@@ -313,6 +376,9 @@ function BlocksScene({ blocks, decorations, bounds, interactive, maxBlocks, came
         return decorations.filter((_, index) => index % step === 0);
     }, [decorations, maxBlocks]);
 
+    const groupedBlocks = useMemo(() => groupItemsByMaterial(sampledBlocks), [sampledBlocks]);
+    const groupedDecorations = useMemo(() => groupItemsByMaterial(sampledDecorations), [sampledDecorations]);
+
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerY = (bounds.minY + bounds.maxY) / 2;
     const centerZ = (bounds.minZ + bounds.maxZ) / 2;
@@ -336,36 +402,15 @@ function BlocksScene({ blocks, decorations, bounds, interactive, maxBlocks, came
                 far: 10000,
                 fov: 42,
             }}
+            dpr={[1, 1.5]}
         >
             <color attach="background" args={['#f8fafc']} />
             <ambientLight intensity={0.6} />
             <directionalLight position={[20, 30, 10]} intensity={0.7} />
             <directionalLight position={[-20, 10, -10]} intensity={0.3} />
 
-            {sampledBlocks.map((block) => (
-                <mesh key={block.key} position={[block.x, block.y, block.z]}>
-                    <boxGeometry args={[1, 1, 1]} />
-                    <meshStandardMaterial
-                        color={block.color}
-                        transparent
-                        opacity={block.opacity}
-                    />
-                </mesh>
-            ))}
-
-            {sampledDecorations.map((decoration) => (
-                <mesh
-                    key={decoration.key}
-                    position={[decoration.x, decoration.y, decoration.z]}
-                >
-                    <boxGeometry args={[0.46, 0.46, 0.08]} />
-                    <meshStandardMaterial
-                        color={decoration.color}
-                        transparent
-                        opacity={decoration.opacity}
-                    />
-                </mesh>
-            ))}
+            <InstancedVoxels groups={groupedBlocks} boxArgs={[1, 1, 1]} />
+            <InstancedVoxels groups={groupedDecorations} boxArgs={[0.46, 0.46, 0.08]} />
 
             <mesh position={[centerX, centerY, bounds.minZ - 0.55]} receiveShadow>
                 <planeGeometry args={[sizeX + 2, sizeY + 2]} />
@@ -431,6 +476,11 @@ export default function Project({ projectId }) {
     const [isSubcellMode, setIsSubcellMode] = useState(false);
     const [selectedSubcellIndices, setSelectedSubcellIndices] = useState([0]);
     const [editingDecorationMasterId, setEditingDecorationMasterId] = useState(null);
+
+    // 左右対称配置モード ('OFF', 'X', 'Y', 'XY')
+    const [mirrorMode, setMirrorMode] = useState('OFF');
+    const [mirrorAxisX, setMirrorAxisX] = useState(0);
+    const [mirrorAxisY, setMirrorAxisY] = useState(0);
 
     // ブロックマスタ追加ダイアログ
     const [isAddMasterOpen, setIsAddMasterOpen] = useState(false);
@@ -686,72 +736,108 @@ export default function Project({ projectId }) {
     }, [loading, bounds]);
 
     const placeBlock = (x, y, z, subcellIndicesOverride = null) => {
-        const key = coordKey(x, y, z);
+        // 対称配置の座標を計算
+        const coordsToPlace = [[x, y]];
+        if (mirrorMode !== 'OFF') {
+            if (mirrorMode === 'X' || mirrorMode === 'XY') {
+                const mirroredX = Math.round(2 * mirrorAxisX - x);
+                if (mirroredX !== x) {
+                    coordsToPlace.push([mirroredX, y]);
+                }
+            }
+            if (mirrorMode === 'Y' || mirrorMode === 'XY') {
+                const mirroredY = Math.round(2 * mirrorAxisY - y);
+                if (mirroredY !== y) {
+                    coordsToPlace.push([x, mirroredY]);
+                }
+            }
+            if (mirrorMode === 'XY') {
+                const mirroredX = Math.round(2 * mirrorAxisX - x);
+                const mirroredY = Math.round(2 * mirrorAxisY - y);
+                if ((mirroredX !== x || mirroredY !== y) && (mirroredX !== x && mirroredY !== y)) {
+                    coordsToPlace.push([mirroredX, mirroredY]);
+                }
+            }
+        }
+
+        // 重複を除去
+        const uniqueCoords = coordsToPlace.filter((coord, idx, arr) =>
+            arr.findIndex(c => c[0] === coord[0] && c[1] === coord[1]) === idx
+        );
+
+        // 全座標を一度のupdateBlockDataで処理
         return updateBlockData((draft) => {
-            if (isSubcellMode) {
-                const selectedIndices = Array.isArray(subcellIndicesOverride)
-                    ? subcellIndicesOverride
-                    : selectedSubcellIndices;
-                const targetSubcellIndices = [...new Set(selectedIndices)]
-                    .filter((index) => Number.isInteger(index) && index >= 0 && index <= 3);
+            let hasChanged = false;
 
-                if (targetSubcellIndices.length === 0) {
-                    return draft;
-                }
+            uniqueCoords.forEach(([px, py]) => {
+                const key = coordKey(px, py, z);
 
-                const existingValue = draft.cells[key];
-                const existingBlockId = getCellBlockId(existingValue);
-                const existingSubcells = getCellSubcells(existingValue);
-                const nextSubcells = Array.isArray(existingSubcells)
-                    ? [...existingSubcells]
-                    : [null, null, null, null];
+                if (isSubcellMode) {
+                    const selectedIndices = Array.isArray(subcellIndicesOverride)
+                        ? subcellIndicesOverride
+                        : selectedSubcellIndices;
+                    const targetSubcellIndices = [...new Set(selectedIndices)]
+                        .filter((index) => Number.isInteger(index) && index >= 0 && index <= 3);
 
-                targetSubcellIndices.forEach((subcellIndex) => {
-                    if (editingDecorationMasterId === null) {
-                        nextSubcells[subcellIndex] = null;
-                    } else {
-                        nextSubcells[subcellIndex] = {
-                            masterId: Number(editingDecorationMasterId),
-                        };
+                    if (targetSubcellIndices.length === 0) {
+                        return;
                     }
-                });
 
-                const hasAnyDecoration = nextSubcells.some((subcell) => !!subcell);
-                if (hasAnyDecoration) {
-                    if (existingBlockId !== null) {
-                        draft.cells[key] = {
-                            type: 'block_with_subcells',
-                            blockId: existingBlockId,
-                            subcells: nextSubcells,
-                        };
+                    const existingValue = draft.cells[key];
+                    const existingBlockId = getCellBlockId(existingValue);
+                    const existingSubcells = getCellSubcells(existingValue);
+                    const nextSubcells = Array.isArray(existingSubcells)
+                        ? [...existingSubcells]
+                        : [null, null, null, null];
+
+                    targetSubcellIndices.forEach((subcellIndex) => {
+                        if (editingDecorationMasterId === null) {
+                            nextSubcells[subcellIndex] = null;
+                        } else {
+                            nextSubcells[subcellIndex] = {
+                                masterId: Number(editingDecorationMasterId),
+                            };
+                        }
+                    });
+
+                    const hasAnyDecoration = nextSubcells.some((subcell) => !!subcell);
+                    if (hasAnyDecoration) {
+                        if (existingBlockId !== null) {
+                            draft.cells[key] = {
+                                type: 'block_with_subcells',
+                                blockId: existingBlockId,
+                                subcells: nextSubcells,
+                            };
+                        } else {
+                            draft.cells[key] = {
+                                type: 'subcell_group',
+                                subcells: nextSubcells,
+                            };
+                        }
+                    } else if (existingBlockId !== null) {
+                        draft.cells[key] = existingBlockId;
                     } else {
-                        draft.cells[key] = {
-                            type: 'subcell_group',
-                            subcells: nextSubcells,
-                        };
+                        delete draft.cells[key];
                     }
-                } else if (existingBlockId !== null) {
-                    draft.cells[key] = existingBlockId;
                 } else {
-                    delete draft.cells[key];
+                    if (selectedBlockId === null) {
+                        delete draft.cells[key];
+                    } else {
+                        const existingSubcells = getCellSubcells(draft.cells[key]);
+                        if (Array.isArray(existingSubcells) && existingSubcells.some((subcell) => !!subcell)) {
+                            draft.cells[key] = {
+                                type: 'block_with_subcells',
+                                blockId: Number(selectedBlockId),
+                                subcells: [...existingSubcells],
+                            };
+                        } else {
+                            draft.cells[key] = Number(selectedBlockId);
+                        }
+                    }
                 }
-                return draft;
-            }
 
-            if (selectedBlockId === null) {
-                delete draft.cells[key];
-            } else {
-                const existingSubcells = getCellSubcells(draft.cells[key]);
-                if (Array.isArray(existingSubcells) && existingSubcells.some((subcell) => !!subcell)) {
-                    draft.cells[key] = {
-                        type: 'block_with_subcells',
-                        blockId: Number(selectedBlockId),
-                        subcells: [...existingSubcells],
-                    };
-                } else {
-                    draft.cells[key] = Number(selectedBlockId);
-                }
-            }
+                hasChanged = true;
+            });
 
             return draft;
         }, { recordHistory: false });
@@ -1839,6 +1925,56 @@ export default function Project({ projectId }) {
 
                     {isUtilityMenuOpen && (
                         <Stack spacing={2} sx={{ mt: 2 }}>
+                            <Card variant="outlined" sx={{ p: 2 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>左右対称配置</Typography>
+                                <Stack spacing={1.5}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Select
+                                            size="small"
+                                            value={mirrorMode}
+                                            onChange={(e) => setMirrorMode(e.target.value)}
+                                            sx={{ minWidth: 150 }}
+                                        >
+                                            <MenuItem value="OFF">OFF（対称配置なし）</MenuItem>
+                                            <MenuItem value="X">X軸対称</MenuItem>
+                                            <MenuItem value="Y">Y軸対称</MenuItem>
+                                            <MenuItem value="XY">両軸対称</MenuItem>
+                                        </Select>
+                                        <Typography variant="caption" color="text.secondary">
+                                            有効時、ブロック配置時に自動で反対側にも配置
+                                        </Typography>
+                                    </Box>
+                                    {mirrorMode !== 'OFF' && (
+                                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+                                            <TextField
+                                                size="small"
+                                                type="number"
+                                                label="対称軸X"
+                                                value={mirrorAxisX}
+                                                onChange={(e) => {
+                                                    const val = Number(e.target.value);
+                                                    if (Number.isFinite(val)) {
+                                                        setMirrorAxisX(val);
+                                                    }
+                                                }}
+                                            />
+                                            <TextField
+                                                size="small"
+                                                type="number"
+                                                label="対称軸Y"
+                                                value={mirrorAxisY}
+                                                onChange={(e) => {
+                                                    const val = Number(e.target.value);
+                                                    if (Number.isFinite(val)) {
+                                                        setMirrorAxisY(val);
+                                                    }
+                                                }}
+                                            />
+                                        </Box>
+                                    )}
+                                </Stack>
+                            </Card>
+
                             <Card variant="outlined" sx={{ p: 2 }}>
                                 <Typography variant="subtitle2" sx={{ mb: 1 }}>装飾サブセル編集 (2x2)</Typography>
                                 <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
