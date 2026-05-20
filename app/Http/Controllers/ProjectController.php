@@ -37,9 +37,22 @@ class ProjectController extends Controller
             'size_z' => 'required|integer|min:1',
         ]);
 
+        $initialBlockData = [
+            'version' => 1,
+            'cells' => [],
+            'bounds' => [
+                'minX' => 0,
+                'maxX' => $validated['size_x'] - 1,
+                'minY' => 0,
+                'maxY' => $validated['size_y'] - 1,
+                'minZ' => 0,
+                'maxZ' => $validated['size_z'] - 1,
+            ],
+        ];
+
         $project = Project::create([
             ...$validated,
-            'block_data' => [],
+            'block_data' => $initialBlockData,
         ]);
 
         return [
@@ -59,13 +72,15 @@ class ProjectController extends Controller
     public function show($id)
     {
         $project = Project::findOrFail($id);
+        $normalizedBlockData = $this->normalizeBlockData($project);
+
         return [
             'id' => $project->id,
             'title' => $project->title,
             'size_x' => $project->size_x,
             'size_y' => $project->size_y,
             'size_z' => $project->size_z,
-            'block_data' => $project->block_data ?? [],
+            'block_data' => $normalizedBlockData,
             'created_at' => $project->created_at,
             'updated_at' => $project->updated_at,
         ];
@@ -83,6 +98,10 @@ class ProjectController extends Controller
             'block_data' => 'sometimes|array',
         ]);
 
+        if (array_key_exists('block_data', $validated)) {
+            $validated['block_data'] = $this->normalizeBlockData($project, $validated['block_data']);
+        }
+
         $project->update($validated);
 
         return [
@@ -91,7 +110,7 @@ class ProjectController extends Controller
             'size_x' => $project->size_x,
             'size_y' => $project->size_y,
             'size_z' => $project->size_z,
-            'block_data' => $project->block_data ?? [],
+            'block_data' => $this->normalizeBlockData($project),
             'created_at' => $project->created_at,
             'updated_at' => $project->updated_at,
         ];
@@ -105,5 +124,88 @@ class ProjectController extends Controller
         $project = Project::findOrFail($id);
         $project->delete();
         return ['message' => 'Project deleted successfully'];
+    }
+
+    /**
+     * Normalize block_data to sparse-map format.
+     */
+    private function normalizeBlockData(Project $project, ?array $inputData = null): array
+    {
+        $data = $inputData ?? ($project->block_data ?? []);
+
+        $defaultBounds = [
+            'minX' => 0,
+            'maxX' => max(0, (int) $project->size_x - 1),
+            'minY' => 0,
+            'maxY' => max(0, (int) $project->size_y - 1),
+            'minZ' => 0,
+            'maxZ' => max(0, (int) $project->size_z - 1),
+        ];
+
+        $cells = [];
+
+        // New format: { cells: { "x,y,z": blockId }, bounds: {...} }
+        if (isset($data['cells']) && is_array($data['cells'])) {
+            foreach ($data['cells'] as $key => $blockId) {
+                if (!is_string($key) || !preg_match('/^-?\d+,-?\d+,-?\d+$/', $key)) {
+                    continue;
+                }
+
+                $normalizedBlockId = (int) $blockId;
+                if ($normalizedBlockId <= 0) {
+                    continue;
+                }
+
+                $cells[$key] = $normalizedBlockId;
+            }
+        }
+
+        // Legacy format: [ { x, y, z, blockId }, ... ]
+        if (empty($cells) && array_is_list($data)) {
+            foreach ($data as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+
+                $x = isset($item['x']) ? (int) $item['x'] : null;
+                $y = isset($item['y']) ? (int) $item['y'] : null;
+                $z = isset($item['z']) ? (int) $item['z'] : null;
+                $blockId = isset($item['blockId']) ? (int) $item['blockId'] : null;
+
+                if ($x === null || $y === null || $z === null || $blockId === null || $blockId <= 0) {
+                    continue;
+                }
+
+                $cells["{$x},{$y},{$z}"] = $blockId;
+            }
+        }
+
+        $bounds = $defaultBounds;
+        if (isset($data['bounds']) && is_array($data['bounds'])) {
+            $bounds = [
+                'minX' => isset($data['bounds']['minX']) ? (int) $data['bounds']['minX'] : $defaultBounds['minX'],
+                'maxX' => isset($data['bounds']['maxX']) ? (int) $data['bounds']['maxX'] : $defaultBounds['maxX'],
+                'minY' => isset($data['bounds']['minY']) ? (int) $data['bounds']['minY'] : $defaultBounds['minY'],
+                'maxY' => isset($data['bounds']['maxY']) ? (int) $data['bounds']['maxY'] : $defaultBounds['maxY'],
+                'minZ' => isset($data['bounds']['minZ']) ? (int) $data['bounds']['minZ'] : $defaultBounds['minZ'],
+                'maxZ' => isset($data['bounds']['maxZ']) ? (int) $data['bounds']['maxZ'] : $defaultBounds['maxZ'],
+            ];
+        }
+
+        if ($bounds['minX'] > $bounds['maxX']) {
+            [$bounds['minX'], $bounds['maxX']] = [$bounds['maxX'], $bounds['minX']];
+        }
+        if ($bounds['minY'] > $bounds['maxY']) {
+            [$bounds['minY'], $bounds['maxY']] = [$bounds['maxY'], $bounds['minY']];
+        }
+        if ($bounds['minZ'] > $bounds['maxZ']) {
+            [$bounds['minZ'], $bounds['maxZ']] = [$bounds['maxZ'], $bounds['minZ']];
+        }
+
+        return [
+            'version' => 1,
+            'cells' => $cells,
+            'bounds' => $bounds,
+        ];
     }
 }
