@@ -30,6 +30,8 @@ const CELL_PX = 32;
 const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.4;
 const AUTOSAVE_DELAY_MS = 8000;
+const PREVIEW_VIEWPORT_PX = 300;
+const TARGET_VISIBLE_CELLS = 20;
 const CHECKER_BG =
     'repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px';
 
@@ -192,6 +194,8 @@ export default function Project({ projectId }) {
     const dragState = useRef({ panning: false, lastX: 0, lastY: 0, moved: false });
     const drawState = useRef({ drawing: false, changed: false, lastKey: null });
     const latestBlockDataRef = useRef(null);
+    const mainViewportRef = useRef(null);
+    const hasInitializedViewportRef = useRef(false);
 
     const pushHistoryEntry = (nextData) => {
         setHistoryState((prev) => {
@@ -276,6 +280,7 @@ export default function Project({ projectId }) {
                 setLastSavedSnapshot(JSON.stringify(normalized));
                 setCurrentZ(normalized.bounds.minZ);
                 setMasters(Array.isArray(mastersData) ? mastersData : []);
+                hasInitializedViewportRef.current = false;
             } catch (e) {
                 setError(e.message);
             } finally {
@@ -326,6 +331,24 @@ export default function Project({ projectId }) {
         }
         return arr;
     }, [bounds]);
+
+    useEffect(() => {
+        if (loading || !bounds || !mainViewportRef.current || hasInitializedViewportRef.current) {
+            return;
+        }
+
+        const viewport = mainViewportRef.current;
+        const viewportWidth = Math.max(1, viewport.clientWidth - 24);
+        const viewportHeight = Math.max(1, viewport.clientHeight - 24);
+
+        const targetScaleX = viewportWidth / (TARGET_VISIBLE_CELLS * CELL_PX);
+        const targetScaleY = viewportHeight / (TARGET_VISIBLE_CELLS * CELL_PX);
+        const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number(Math.min(targetScaleX, targetScaleY).toFixed(2))));
+
+        setScale(nextScale);
+        setOffset({ x: 16, y: 16 });
+        hasInitializedViewportRef.current = true;
+    }, [loading, bounds]);
 
     const placeBlock = (x, y, z) => {
         const key = coordKey(x, y, z);
@@ -611,7 +634,13 @@ export default function Project({ projectId }) {
     }, [blockData, loading, saving, isDirty]);
 
     const renderPlane = (z, { clickable, title, compact = false }) => {
-        const size = compact ? 18 : CELL_PX;
+        const xCount = xList.length;
+        const yCount = yList.length;
+        const compactCellSize = Math.max(
+            2,
+            Math.floor((PREVIEW_VIEWPORT_PX - Math.max(0, xCount - 1)) / Math.max(1, xCount)),
+        );
+        const size = compact ? compactCellSize : CELL_PX;
 
         return (
             <Card sx={{ p: 1.5 }}>
@@ -619,57 +648,71 @@ export default function Project({ projectId }) {
                     {title}
                 </Typography>
                 <Box
-                    sx={{
-                        display: 'grid',
-                        gridTemplateColumns: `repeat(${xList.length}, ${size}px)`,
-                        gap: '1px',
-                        backgroundColor: '#cbd5e1',
-                        border: '1px solid #94a3b8',
-                        width: 'fit-content',
-                    }}
+                    sx={compact ? {
+                        width: '100%',
+                        height: PREVIEW_VIEWPORT_PX,
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflow: 'hidden',
+                        backgroundColor: '#f8fafc',
+                    } : undefined}
                 >
-                    {yList.map((y) => xList.map((x) => {
-                        const block = getBlockForCell(x, y, z);
-                        const isCurrentLayer = z === currentZ;
-                        const blockColor = block?.color ?? null;
-                        const showStrongBorder = blockColor ? isLightHexColor(blockColor) : false;
-                        const isGuideLine = !!hoverCoord && (x === hoverCoord.x || y === hoverCoord.y);
-                        const isGuidePoint = !!hoverCoord && (x === hoverCoord.x && y === hoverCoord.y);
-                        const isAdjacentPlane = z !== currentZ;
-                        return (
-                            <Box
-                                key={`${x}-${y}-${z}`}
-                                onMouseDown={(e) => {
-                                    if (!clickable || e.button !== 0) {
-                                        return;
-                                    }
-                                    e.stopPropagation();
-                                    startDrawingAt(x, y, z);
-                                    setHoverCoord({ x, y });
-                                }}
-                                onMouseEnter={() => {
-                                    if (clickable) {
+                    <Box
+                        sx={{
+                            display: 'grid',
+                            gridTemplateColumns: `repeat(${xList.length}, ${size}px)`,
+                            gap: '1px',
+                            backgroundColor: '#cbd5e1',
+                            border: '1px solid #94a3b8',
+                            width: 'fit-content',
+                        }}
+                    >
+                        {yList.map((y) => xList.map((x) => {
+                            const block = getBlockForCell(x, y, z);
+                            const isCurrentLayer = z === currentZ;
+                            const blockColor = block?.color ?? null;
+                            const showStrongBorder = blockColor ? isLightHexColor(blockColor) : false;
+                            const isGuideLine = !!hoverCoord && (x === hoverCoord.x || y === hoverCoord.y);
+                            const isGuidePoint = !!hoverCoord && (x === hoverCoord.x && y === hoverCoord.y);
+                            const isAdjacentPlane = z !== currentZ;
+                            return (
+                                <Box
+                                    key={`${x}-${y}-${z}`}
+                                    onMouseDown={(e) => {
+                                        if (!clickable || e.button !== 0) {
+                                            return;
+                                        }
+                                        e.stopPropagation();
+                                        startDrawingAt(x, y, z);
                                         setHoverCoord({ x, y });
-                                        drawAt(x, y, z);
-                                    }
-                                }}
-                                title={`x:${x}, y:${y}, z:${z}`}
-                                sx={{
-                                    width: size,
-                                    height: size,
-                                    background: blockColor ? blockColor : CHECKER_BG,
-                                    opacity: block ? Math.max(0.1, Number(block.opacity ?? 100) / 100) : 1,
-                                    border: isCurrentLayer ? '1px solid #2563eb' : '1px solid #cbd5e1',
-                                    boxShadow: [
-                                        showStrongBorder ? 'inset 0 0 0 1px #334155' : null,
-                                        isGuideLine ? 'inset 0 0 0 1px rgba(37, 99, 235, 0.45)' : null,
-                                        isGuidePoint ? (isAdjacentPlane ? '0 0 0 2px rgba(217, 70, 239, 0.95) inset' : '0 0 0 2px rgba(37, 99, 235, 0.95) inset') : null,
-                                    ].filter(Boolean).join(', '),
-                                    cursor: clickable ? 'pointer' : 'default',
-                                }}
-                            />
-                        );
-                    }))}
+                                    }}
+                                    onMouseEnter={() => {
+                                        if (clickable) {
+                                            setHoverCoord({ x, y });
+                                            drawAt(x, y, z);
+                                        }
+                                    }}
+                                    title={`x:${x}, y:${y}, z:${z}`}
+                                    sx={{
+                                        width: size,
+                                        height: size,
+                                        background: blockColor ? blockColor : CHECKER_BG,
+                                        opacity: block ? Math.max(0.1, Number(block.opacity ?? 100) / 100) : 1,
+                                        border: isCurrentLayer ? '1px solid #2563eb' : '1px solid #cbd5e1',
+                                        boxShadow: [
+                                            showStrongBorder ? 'inset 0 0 0 1px #334155' : null,
+                                            isGuideLine ? 'inset 0 0 0 1px rgba(37, 99, 235, 0.45)' : null,
+                                            isGuidePoint ? (isAdjacentPlane ? '0 0 0 2px rgba(217, 70, 239, 0.95) inset' : '0 0 0 2px rgba(37, 99, 235, 0.95) inset') : null,
+                                        ].filter(Boolean).join(', '),
+                                        cursor: clickable ? 'pointer' : 'default',
+                                    }}
+                                />
+                            );
+                        }))}
+                    </Box>
                 </Box>
             </Card>
         );
@@ -794,7 +837,7 @@ export default function Project({ projectId }) {
                 <Box
                     sx={{
                         display: 'grid',
-                        gridTemplateColumns: { xs: '1fr', lg: '7fr 3fr' },
+                        gridTemplateColumns: { xs: '1fr', md: '7fr 3fr' },
                         gap: 2,
                         alignItems: 'start',
                     }}
@@ -834,6 +877,7 @@ export default function Project({ projectId }) {
                         </Stack>
 
                         <Box
+                            ref={mainViewportRef}
                             onWheel={onWheel}
                             onMouseDown={onPanStart}
                             onMouseMove={onPanMove}
