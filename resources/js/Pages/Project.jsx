@@ -6,6 +6,8 @@ import {
     Button,
     Card,
     Container,
+    Dialog,
+    DialogContent,
     Divider,
     IconButton,
     Stack,
@@ -19,7 +21,10 @@ import {
     ZoomIn as ZoomInIcon,
     ZoomOut as ZoomOutIcon,
     Save as SaveIcon,
+    OpenInFull as OpenInFullIcon,
 } from '@mui/icons-material';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls } from '@react-three/drei';
 
 const CELL_PX = 32;
 const MIN_SCALE = 0.4;
@@ -111,6 +116,61 @@ const isLightHexColor = (hex) => {
     return luminance >= 190;
 };
 
+function BlocksScene({ blocks, bounds, interactive }) {
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+    const centerZ = (bounds.minZ + bounds.maxZ) / 2;
+
+    const sizeX = Math.max(1, bounds.maxX - bounds.minX + 1);
+    const sizeY = Math.max(1, bounds.maxY - bounds.minY + 1);
+    const sizeZ = Math.max(1, bounds.maxZ - bounds.minZ + 1);
+    const biggestSize = Math.max(sizeX, sizeY, sizeZ);
+    const cameraDistance = Math.max(10, biggestSize * 1.8);
+
+    return (
+        <Canvas
+            camera={{
+                position: [centerX + cameraDistance, centerY + cameraDistance, centerZ + cameraDistance],
+                fov: 45,
+            }}
+        >
+            <color attach="background" args={['#f8fafc']} />
+            <ambientLight intensity={0.6} />
+            <directionalLight position={[20, 30, 10]} intensity={0.7} />
+            <directionalLight position={[-20, 10, -10]} intensity={0.3} />
+
+            {blocks.map((block) => (
+                <mesh key={block.key} position={[block.x, block.y, block.z]}>
+                    <boxGeometry args={[1, 1, 1]} />
+                    <meshStandardMaterial
+                        color={block.color}
+                        transparent
+                        opacity={block.opacity}
+                    />
+                </mesh>
+            ))}
+
+            <mesh position={[centerX, centerY, bounds.minZ - 0.55]} receiveShadow>
+                <planeGeometry args={[sizeX + 2, sizeY + 2]} />
+                <meshStandardMaterial color="#e2e8f0" />
+            </mesh>
+
+            <gridHelper
+                args={[Math.max(sizeX, sizeY) + 2, Math.max(sizeX, sizeY) + 2, '#94a3b8', '#cbd5e1']}
+                position={[centerX, centerY, bounds.minZ - 0.5]}
+                rotation={[Math.PI / 2, 0, 0]}
+            />
+
+            <OrbitControls
+                enablePan={interactive}
+                enableZoom
+                enableRotate
+                makeDefault
+            />
+        </Canvas>
+    );
+}
+
 export default function Project({ projectId }) {
     const [project, setProject] = useState(null);
     const [blockData, setBlockData] = useState(null);
@@ -125,6 +185,7 @@ export default function Project({ projectId }) {
     const [saving, setSaving] = useState(false);
     const [lastSavedSnapshot, setLastSavedSnapshot] = useState('');
     const [autoSaveMessage, setAutoSaveMessage] = useState('');
+    const [isPreview3DOpen, setIsPreview3DOpen] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
@@ -353,6 +414,26 @@ export default function Project({ projectId }) {
         const id = Number(blockData?.cells?.[coordKey(x, y, z)] ?? 0);
         return mastersById.get(id) ?? null;
     };
+
+    const blocksFor3D = useMemo(() => {
+        if (!blockData?.cells) {
+            return [];
+        }
+
+        return Object.entries(blockData.cells).map(([key, blockId]) => {
+            const [x, y, z] = key.split(',').map(Number);
+            const master = mastersById.get(Number(blockId));
+
+            return {
+                key,
+                x,
+                y,
+                z,
+                color: master?.color ?? '#94a3b8',
+                opacity: Math.max(0.1, Number(master?.opacity ?? 100) / 100),
+            };
+        });
+    }, [blockData, mastersById]);
 
     const onWheel = (e) => {
         e.preventDefault();
@@ -782,6 +863,32 @@ export default function Project({ projectId }) {
                     </Card>
 
                     <Stack spacing={2}>
+                        <Card sx={{ p: 1.5 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                                <Typography variant="subtitle2">3Dプレビュー</Typography>
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    startIcon={<OpenInFullIcon />}
+                                    onClick={() => setIsPreview3DOpen(true)}
+                                >
+                                    拡大
+                                </Button>
+                            </Box>
+                            <Box
+                                onClick={() => setIsPreview3DOpen(true)}
+                                sx={{
+                                    height: 220,
+                                    border: '1px solid #cbd5e1',
+                                    borderRadius: 1,
+                                    overflow: 'hidden',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive={false} />
+                            </Box>
+                        </Card>
+
                         <Box>
                             {renderPlane(currentZ + 1, {
                                 clickable: false,
@@ -798,6 +905,20 @@ export default function Project({ projectId }) {
                         </Box>
                     </Stack>
                 </Box>
+
+                <Dialog
+                    open={isPreview3DOpen}
+                    onClose={() => setIsPreview3DOpen(false)}
+                    fullWidth
+                    maxWidth="lg"
+                >
+                    <DialogContent sx={{ p: 2 }}>
+                        <Typography variant="subtitle1" sx={{ mb: 1 }}>3Dシミュレーター（拡大表示）</Typography>
+                        <Box sx={{ height: '70vh', border: '1px solid #cbd5e1', borderRadius: 1, overflow: 'hidden' }}>
+                            <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive />
+                        </Box>
+                    </DialogContent>
+                </Dialog>
             </Stack>
         </Container>
     );
