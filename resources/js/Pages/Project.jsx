@@ -24,8 +24,9 @@ import {
     Save as SaveIcon,
     OpenInFull as OpenInFullIcon,
 } from '@mui/icons-material';
-import { Canvas } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import * as THREE from 'three';
+import { Canvas, useThree, useFrame } from '@react-three/fiber';
+import { OrbitControls, PointerLockControls } from '@react-three/drei';
 
 const CELL_PX = 32;
 const MIN_SCALE = 0.4;
@@ -126,7 +127,110 @@ const isLightHexColor = (hex) => {
     return luminance >= 190;
 };
 
-function BlocksScene({ blocks, bounds, interactive, maxBlocks }) {
+function WalkControls({ eyeHeight }) {
+    const controlsRef = useRef();
+    const keys = useRef({ w: false, a: false, s: false, d: false });
+    const { camera } = useThree();
+    const SPEED = 6;
+
+    useEffect(() => {
+        const down = (e) => {
+            if (e.code === 'KeyW' || e.code === 'ArrowUp')    keys.current.w = true;
+            if (e.code === 'KeyA' || e.code === 'ArrowLeft')  keys.current.a = true;
+            if (e.code === 'KeyS' || e.code === 'ArrowDown')  keys.current.s = true;
+            if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.current.d = true;
+        };
+        const up = (e) => {
+            if (e.code === 'KeyW' || e.code === 'ArrowUp')    keys.current.w = false;
+            if (e.code === 'KeyA' || e.code === 'ArrowLeft')  keys.current.a = false;
+            if (e.code === 'KeyS' || e.code === 'ArrowDown')  keys.current.s = false;
+            if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.current.d = false;
+        };
+        window.addEventListener('keydown', down);
+        window.addEventListener('keyup', up);
+        return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+    }, []);
+
+    useFrame((_, delta) => {
+        if (!controlsRef.current?.isLocked) return;
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        dir.y = 0;
+        if (dir.length() < 0.001) return;
+        dir.normalize();
+        const right = new THREE.Vector3(-dir.z, 0, dir.x);
+        const vel = new THREE.Vector3();
+        if (keys.current.w) vel.addScaledVector(dir,   SPEED * delta);
+        if (keys.current.s) vel.addScaledVector(dir,  -SPEED * delta);
+        if (keys.current.a) vel.addScaledVector(right, -SPEED * delta);
+        if (keys.current.d) vel.addScaledVector(right,  SPEED * delta);
+        camera.position.add(vel);
+        camera.position.y = eyeHeight;
+    });
+
+    return <PointerLockControls ref={controlsRef} />;
+}
+
+function WalkScene({ blocks, bounds, maxBlocks }) {
+    const sampledBlocks = useMemo(() => {
+        if (!maxBlocks || blocks.length <= maxBlocks) return blocks;
+        const step = Math.ceil(blocks.length / maxBlocks);
+        return blocks.filter((_, i) => i % step === 0);
+    }, [blocks, maxBlocks]);
+
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+    const eyeHeight = bounds.minZ + 1.5;
+    const sizeX = Math.max(1, bounds.maxX - bounds.minX + 1);
+    const sizeY = Math.max(1, bounds.maxY - bounds.minY + 1);
+
+    // このシーンはThree.js標準(Y-up)で描画する
+    // シーン座標(x, y, z) → Three.js座標(x, z, y) でZが高さになる
+    return (
+        <Canvas camera={{ position: [centerX, eyeHeight, centerY], fov: 75, near: 0.05, far: 10000 }}>
+            <color attach="background" args={['#87ceeb']} />
+            <ambientLight intensity={0.8} />
+            <directionalLight position={[100, 100, 50]} intensity={0.7} />
+            <directionalLight position={[-50, 50, -30]} intensity={0.3} />
+
+            {sampledBlocks.map((block) => (
+                <mesh key={block.key} position={[block.x, block.z, block.y]}>
+                    <boxGeometry args={[1, 1, 1]} />
+                    <meshStandardMaterial color={block.color} transparent opacity={block.opacity} />
+                </mesh>
+            ))}
+
+            <mesh position={[centerX, bounds.minZ - 0.5, centerY]} rotation={[-Math.PI / 2, 0, 0]}>
+                <planeGeometry args={[sizeX + 20, sizeY + 20]} />
+                <meshStandardMaterial color="#5a8f3c" />
+            </mesh>
+
+            <WalkControls eyeHeight={eyeHeight} />
+        </Canvas>
+    );
+}
+
+function CameraController({ cameraPosition, cameraTarget }) {
+    const { camera } = useThree();
+
+    // 常にZ軸を上に設定
+    useEffect(() => {
+        camera.up.set(0, 0, 1);
+        camera.updateProjectionMatrix();
+    }, [camera]);
+
+    // カメラ位置が明示指定された場合のみ反映
+    useEffect(() => {
+        if (!cameraPosition) return;
+        camera.position.set(cameraPosition[0], cameraPosition[1], cameraPosition[2]);
+        camera.up.set(0, 0, 1);
+        camera.updateProjectionMatrix();
+    }, [cameraPosition, camera]);
+
+    return null;
+}
+
+function BlocksScene({ blocks, bounds, interactive, maxBlocks, cameraPosition, cameraTarget }) {
     const sampledBlocks = useMemo(() => {
         if (!maxBlocks || blocks.length <= maxBlocks) {
             return blocks;
@@ -146,10 +250,15 @@ function BlocksScene({ blocks, bounds, interactive, maxBlocks }) {
     const biggestSize = Math.max(sizeX, sizeY, sizeZ);
     const cameraDistance = Math.max(20, biggestSize * 1.25);
 
+    // デフォルト: Z軸上方向で正面右上から俯瞰（XY平面が地面に平行）
+    const finalCameraPos = cameraPosition ?? [centerX + cameraDistance, centerY - cameraDistance, centerZ + cameraDistance * 0.8];
+    const finalCameraTarget = cameraTarget ?? [centerX, centerY, centerZ];
+
     return (
         <Canvas
             camera={{
-                position: [centerX + cameraDistance, centerY + cameraDistance, centerZ + cameraDistance],
+                position: finalCameraPos,
+                up: [0, 0, 1],
                 near: 0.1,
                 far: 10000,
                 fov: 42,
@@ -182,8 +291,10 @@ function BlocksScene({ blocks, bounds, interactive, maxBlocks }) {
                 rotation={[Math.PI / 2, 0, 0]}
             />
 
+            <CameraController cameraPosition={cameraPosition} cameraTarget={cameraTarget} />
+
             <OrbitControls
-                target={[centerX, centerY, centerZ]}
+                target={finalCameraTarget}
                 enablePan={interactive}
                 enableZoom
                 enableRotate
@@ -209,6 +320,13 @@ export default function Project({ projectId }) {
     const [lastSavedSnapshot, setLastSavedSnapshot] = useState('');
     const [autoSaveMessage, setAutoSaveMessage] = useState('');
     const [isPreview3DOpen, setIsPreview3DOpen] = useState(false);
+    const [isWalkModeOpen, setIsWalkModeOpen] = useState(false);
+    const [camera3DX, setCamera3DX] = useState(null);
+    const [camera3DY, setCamera3DY] = useState(null);
+    const [camera3DZ, setCamera3DZ] = useState(null);
+    const [target3DX, setTarget3DX] = useState(null);
+    const [target3DY, setTarget3DY] = useState(null);
+    const [target3DZ, setTarget3DZ] = useState(null);
     const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false);
     const [isRangeFillMode, setIsRangeFillMode] = useState(false);
     const [rangeFillAnchor, setRangeFillAnchor] = useState(null);
@@ -1682,14 +1800,23 @@ export default function Project({ projectId }) {
                         <Card sx={{ p: 1.5 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
                                 <Typography variant="subtitle2">3Dプレビュー</Typography>
-                                <Button
-                                    size="small"
-                                    variant="outlined"
-                                    startIcon={<OpenInFullIcon />}
-                                    onClick={() => setIsPreview3DOpen(true)}
-                                >
-                                    拡大
-                                </Button>
+                                <Stack direction="row" spacing={1}>
+                                    <Button
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => setIsWalkModeOpen(true)}
+                                    >
+                                        町を歩く
+                                    </Button>
+                                    <Button
+                                        size="small"
+                                        variant="outlined"
+                                        startIcon={<OpenInFullIcon />}
+                                        onClick={() => setIsPreview3DOpen(true)}
+                                    >
+                                        拡大
+                                    </Button>
+                                </Stack>
                             </Box>
                             <Box
                                 onClick={() => setIsPreview3DOpen(true)}
@@ -1720,8 +1847,99 @@ export default function Project({ projectId }) {
                 >
                     <DialogContent sx={{ p: 2 }}>
                         <Typography variant="subtitle1" sx={{ mb: 1 }}>3Dシミュレーター（拡大表示）</Typography>
+                        <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
+                            <TextField
+                                size="small"
+                                type="number"
+                                label="カメラX"
+                                value={camera3DX ?? ''}
+                                onChange={(e) => setCamera3DX(e.target.value === '' ? null : Number(e.target.value))}
+                                sx={{ width: 120 }}
+                            />
+                            <TextField
+                                size="small"
+                                type="number"
+                                label="カメラY"
+                                value={camera3DY ?? ''}
+                                onChange={(e) => setCamera3DY(e.target.value === '' ? null : Number(e.target.value))}
+                                sx={{ width: 120 }}
+                            />
+                            <TextField
+                                size="small"
+                                type="number"
+                                label="カメラZ"
+                                value={camera3DZ ?? ''}
+                                onChange={(e) => setCamera3DZ(e.target.value === '' ? null : Number(e.target.value))}
+                                sx={{ width: 120 }}
+                            />
+                            <Divider orientation="vertical" flexItem />
+                            <TextField
+                                size="small"
+                                type="number"
+                                label="注視X"
+                                value={target3DX ?? ''}
+                                onChange={(e) => setTarget3DX(e.target.value === '' ? null : Number(e.target.value))}
+                                sx={{ width: 120 }}
+                            />
+                            <TextField
+                                size="small"
+                                type="number"
+                                label="注視Y"
+                                value={target3DY ?? ''}
+                                onChange={(e) => setTarget3DY(e.target.value === '' ? null : Number(e.target.value))}
+                                sx={{ width: 120 }}
+                            />
+                            <TextField
+                                size="small"
+                                type="number"
+                                label="注視Z"
+                                value={target3DZ ?? ''}
+                                onChange={(e) => setTarget3DZ(e.target.value === '' ? null : Number(e.target.value))}
+                                sx={{ width: 120 }}
+                            />
+                        </Stack>
                         <Box sx={{ height: '70vh', border: '1px solid #cbd5e1', borderRadius: 1, overflow: 'hidden' }}>
-                            <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive maxBlocks={LARGE_3D_MAX_BLOCKS} />
+                            <BlocksScene
+                                blocks={blocksFor3D}
+                                bounds={bounds}
+                                interactive
+                                maxBlocks={LARGE_3D_MAX_BLOCKS}
+                                cameraPosition={Number.isFinite(camera3DX) && Number.isFinite(camera3DY) && Number.isFinite(camera3DZ) ? [Number(camera3DX), Number(camera3DY), Number(camera3DZ)] : undefined}
+                                cameraTarget={Number.isFinite(target3DX) && Number.isFinite(target3DY) && Number.isFinite(target3DZ) ? [Number(target3DX), Number(target3DY), Number(target3DZ)] : undefined}
+                            />
+                        </Box>
+                    </DialogContent>
+                </Dialog>
+
+                <Dialog
+                    open={isWalkModeOpen}
+                    onClose={() => setIsWalkModeOpen(false)}
+                    fullWidth
+                    maxWidth="xl"
+                >
+                    <DialogContent sx={{ p: 0, position: 'relative' }}>
+                        <Box
+                            sx={{
+                                position: 'absolute',
+                                top: 8,
+                                left: 8,
+                                zIndex: 10,
+                                bgcolor: 'rgba(0,0,0,0.65)',
+                                color: 'white',
+                                px: 1.5,
+                                py: 1,
+                                borderRadius: 1,
+                                pointerEvents: 'none',
+                            }}
+                        >
+                            <Typography variant="caption" display="block">クリックでマウスロック（視点操作開始）</Typography>
+                            <Typography variant="caption" display="block">W / A / S / D または ↑↓←→ で移動</Typography>
+                            <Typography variant="caption" display="block">Esc でマウスロック解除</Typography>
+                        </Box>
+                        <Box sx={{ height: '85vh' }}>
+                            {isWalkModeOpen && (
+                                <WalkScene blocks={blocksFor3D} bounds={bounds} maxBlocks={LARGE_3D_MAX_BLOCKS} />
+                            )}
                         </Box>
                     </DialogContent>
                 </Dialog>
