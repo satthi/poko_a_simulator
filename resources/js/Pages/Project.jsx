@@ -211,6 +211,7 @@ export default function Project({ projectId }) {
     const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false);
     const [isRangeFillMode, setIsRangeFillMode] = useState(false);
     const [rangeFillAnchor, setRangeFillAnchor] = useState(null);
+    const [isBucketFillMode, setIsBucketFillMode] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
@@ -568,6 +569,59 @@ export default function Project({ projectId }) {
         });
     };
 
+    const floodFillOnCurrentPlane = (startX, startY) => {
+        updateBlockData((draft) => {
+            const replacementId = Number(selectedBlockId);
+            const startKey = coordKey(startX, startY, currentZ);
+            const startRaw = draft.cells[startKey];
+            const targetId = Number.isFinite(Number(startRaw)) ? Number(startRaw) : null;
+
+            if (targetId === replacementId) {
+                return draft;
+            }
+
+            const inBounds = (x, y) => (
+                x >= draft.bounds.minX && x <= draft.bounds.maxX
+                && y >= draft.bounds.minY && y <= draft.bounds.maxY
+            );
+
+            const getCellId = (x, y) => {
+                const raw = draft.cells[coordKey(x, y, currentZ)];
+                return Number.isFinite(Number(raw)) ? Number(raw) : null;
+            };
+
+            const queue = [[startX, startY]];
+            const visited = new Set();
+
+            while (queue.length > 0) {
+                const [x, y] = queue.shift();
+                const visitKey = `${x},${y}`;
+                if (visited.has(visitKey)) {
+                    continue;
+                }
+                visited.add(visitKey);
+
+                if (!inBounds(x, y)) {
+                    continue;
+                }
+
+                if (getCellId(x, y) !== targetId) {
+                    continue;
+                }
+
+                const key = coordKey(x, y, currentZ);
+                draft.cells[key] = replacementId;
+
+                queue.push([x + 1, y]);
+                queue.push([x - 1, y]);
+                queue.push([x, y + 1]);
+                queue.push([x, y - 1]);
+            }
+
+            return draft;
+        });
+    };
+
     const startRangeFillMode = () => {
         if (selectedBlockId === null) {
             setError('範囲塗りつぶしには配置ブロックを選択してください');
@@ -575,6 +629,7 @@ export default function Project({ projectId }) {
         }
 
         finishDrawing();
+        setIsBucketFillMode(false);
         setError('');
         setSuccess('範囲塗りつぶしモード: 開始点をクリックしてください');
         setRangeFillAnchor(null);
@@ -584,6 +639,23 @@ export default function Project({ projectId }) {
     const cancelRangeFillMode = () => {
         setIsRangeFillMode(false);
         setRangeFillAnchor(null);
+    };
+
+    const startBucketFillMode = () => {
+        if (selectedBlockId === null) {
+            setError('ペンキ塗りつぶしには配置ブロックを選択してください');
+            return;
+        }
+
+        finishDrawing();
+        cancelRangeFillMode();
+        setError('');
+        setSuccess('ペンキ塗りつぶしモード: 塗りつぶしたい箇所をクリックしてください');
+        setIsBucketFillMode(true);
+    };
+
+    const cancelBucketFillMode = () => {
+        setIsBucketFillMode(false);
     };
 
     const handleRangeFillClick = (x, y, z) => {
@@ -608,6 +680,22 @@ export default function Project({ projectId }) {
         setSuccess(`範囲を塗りつぶしました: (${rangeFillAnchor.x}, ${rangeFillAnchor.y}) - (${x}, ${y})`);
         setRangeFillAnchor(null);
         setIsRangeFillMode(false);
+        return true;
+    };
+
+    const handleBucketFillClick = (x, y, z) => {
+        if (!isBucketFillMode || z !== currentZ) {
+            return false;
+        }
+
+        if (selectedBlockId === null) {
+            setError('ペンキ塗りつぶしには配置ブロックを選択してください');
+            return true;
+        }
+
+        floodFillOnCurrentPlane(x, y);
+        setError('');
+        setSuccess(`塗りつぶしました: (${x}, ${y}, Z=${z})`);
         return true;
     };
 
@@ -953,6 +1041,12 @@ export default function Project({ projectId }) {
                                             return;
                                         }
                                         e.stopPropagation();
+                                        if (handleBucketFillClick(x, y, z)) {
+                                            if (shouldUseHoverGuide) {
+                                                setHoverCoord({ x, y });
+                                            }
+                                            return;
+                                        }
                                         if (handleRangeFillClick(x, y, z)) {
                                             if (shouldUseHoverGuide) {
                                                 setHoverCoord({ x, y });
@@ -969,7 +1063,7 @@ export default function Project({ projectId }) {
                                             if (shouldUseHoverGuide) {
                                                 setHoverCoord({ x, y });
                                             }
-                                            if (!isRangeFillMode) {
+                                            if (!isRangeFillMode && !isBucketFillMode) {
                                                 drawAt(x, y, z);
                                             }
                                         }
@@ -987,7 +1081,7 @@ export default function Project({ projectId }) {
                                             isGuidePoint ? (isAdjacentPlane ? '0 0 0 2px rgba(217, 70, 239, 0.95) inset' : '0 0 0 2px rgba(37, 99, 235, 0.95) inset') : null,
                                             isRangeAnchor ? '0 0 0 2px rgba(234, 88, 12, 0.95) inset' : null,
                                         ].filter(Boolean).join(', '),
-                                        cursor: clickable ? (isRangeFillMode ? 'crosshair' : 'pointer') : 'default',
+                                        cursor: clickable ? ((isRangeFillMode || isBucketFillMode) ? 'crosshair' : 'pointer') : 'default',
                                     }}
                                 />
                             );
@@ -1150,12 +1244,25 @@ export default function Project({ projectId }) {
                                     >
                                         {isRangeFillMode ? '範囲塗りつぶしを終了' : '範囲塗りつぶし'}
                                     </Button>
+                                    <Button
+                                        size="small"
+                                        variant={isBucketFillMode ? 'contained' : 'outlined'}
+                                        onClick={isBucketFillMode ? cancelBucketFillMode : startBucketFillMode}
+                                        disabled={selectedBlockId === null && !isBucketFillMode}
+                                    >
+                                        {isBucketFillMode ? 'ペンキ塗りつぶしを終了' : 'ペンキ塗りつぶし'}
+                                    </Button>
                                 </Stack>
                                 {isRangeFillMode && (
                                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
                                         {!rangeFillAnchor
                                             ? `開始点をクリックしてください (Z=${currentZ})`
                                             : `開始点: (${rangeFillAnchor.x}, ${rangeFillAnchor.y}, Z=${rangeFillAnchor.z}) / 終了点をクリックしてください`}
+                                    </Typography>
+                                )}
+                                {isBucketFillMode && (
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                                        現在のZ平面で、クリック位置から同じ種類（空白含む）で連結した領域を塗りつぶします
                                     </Typography>
                                 )}
                                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
