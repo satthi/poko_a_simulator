@@ -194,6 +194,7 @@ export default function Project({ projectId }) {
     const [lastSavedSnapshot, setLastSavedSnapshot] = useState('');
     const [autoSaveMessage, setAutoSaveMessage] = useState('');
     const [isPreview3DOpen, setIsPreview3DOpen] = useState(false);
+    const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
@@ -943,68 +944,95 @@ export default function Project({ projectId }) {
                 {success && <Alert severity="success">{success}</Alert>}
 
                 <Card sx={{ p: 2 }}>
-                    <Typography variant="subtitle1" sx={{ mb: 1 }}>配置ブロック</Typography>
-                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Typography variant="subtitle1">便利メニュー</Typography>
                         <Button
-                            variant={selectedBlockId === null ? 'contained' : 'outlined'}
-                            color="inherit"
-                            onClick={() => setSelectedBlockId(null)}
-                            startIcon={<RemoveIcon />}
+                            size="small"
+                            variant="outlined"
+                            onClick={() => setIsUtilityMenuOpen((prev) => !prev)}
                         >
-                            消しゴム
+                            {isUtilityMenuOpen ? '非表示' : '表示'}
                         </Button>
-                        {masters.map((master) => (
-                            <Button
-                                key={master.id}
-                                variant={selectedBlockId === Number(master.id) ? 'contained' : 'outlined'}
-                                onClick={() => setSelectedBlockId(Number(master.id))}
-                                startIcon={(
-                                    <Box
-                                        sx={{
-                                            width: 14,
-                                            height: 14,
-                                            borderRadius: '3px',
-                                            border: '1px solid #64748b',
-                                            background: master.color,
-                                            boxShadow: isLightHexColor(master.color) ? 'inset 0 0 0 1px #334155' : 'none',
-                                        }}
-                                    />
-                                )}
-                                sx={{
-                                    borderColor: '#94a3b8',
-                                    color: '#0f172a',
-                                    backgroundColor: selectedBlockId === Number(master.id) ? '#e2e8f0' : '#ffffff',
-                                    '&:hover': {
-                                        backgroundColor: selectedBlockId === Number(master.id) ? '#cbd5e1' : '#f8fafc',
-                                        borderColor: '#64748b',
-                                    },
-                                }}
-                            >
-                                {master.name}
-                            </Button>
-                        ))}
-                    </Stack>
-                </Card>
-
-                <Card sx={{ p: 2 }}>
-                    <Typography variant="subtitle1" sx={{ mb: 1 }}>領域操作（各軸の両方向）</Typography>
-                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                        <Button size="small" onClick={() => adjustBound('minX', 'expand')}>X- 拡張</Button>
-                        <Button size="small" onClick={() => adjustBound('minX', 'shrink')}>X- 削除</Button>
-                        <Button size="small" onClick={() => adjustBound('maxX', 'expand')}>X+ 拡張</Button>
-                        <Button size="small" onClick={() => adjustBound('maxX', 'shrink')}>X+ 削除</Button>
-                        <Button size="small" onClick={() => adjustBound('minY', 'expand')}>Y- 拡張</Button>
-                        <Button size="small" onClick={() => adjustBound('minY', 'shrink')}>Y- 削除</Button>
-                        <Button size="small" onClick={() => adjustBound('maxY', 'expand')}>Y+ 拡張</Button>
-                        <Button size="small" onClick={() => adjustBound('maxY', 'shrink')}>Y+ 削除</Button>
-                        <Button size="small" onClick={() => adjustBound('minZ', 'expand')}>Z- 拡張</Button>
-                        <Button size="small" onClick={() => adjustBound('minZ', 'shrink')}>Z- 削除</Button>
-                        <Button size="small" onClick={() => adjustBound('maxZ', 'expand')}>Z+ 拡張</Button>
-                        <Button size="small" onClick={() => adjustBound('maxZ', 'shrink')}>Z+ 削除</Button>
-                    </Stack>
-                    <Typography variant="caption" color="text.secondary">
-                        範囲: X({bounds.minX}..{bounds.maxX}) / Y({bounds.minY}..{bounds.maxY}) / Z({bounds.minZ}..{bounds.maxZ})
+                    </Box>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        ブロック選択・領域操作・今後の便利ツールをここにまとめます
                     </Typography>
+
+                    {isUtilityMenuOpen && (
+                        <Stack spacing={2} sx={{ mt: 2 }}>
+                            <Card variant="outlined" sx={{ p: 2 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>配置ブロック</Typography>
+                                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                    <Button
+                                        variant={selectedBlockId === null ? 'contained' : 'outlined'}
+                                        color="inherit"
+                                        onClick={() => setSelectedBlockId(null)}
+                                        startIcon={<RemoveIcon />}
+                                    >
+                                        消しゴム
+                                    </Button>
+                                    {masters.map((master) => (
+                                        <Button
+                                            key={master.id}
+                                            variant={selectedBlockId === Number(master.id) ? 'contained' : 'outlined'}
+                                            onClick={() => setSelectedBlockId(Number(master.id))}
+                                            startIcon={(
+                                                <Box
+                                                    sx={{
+                                                        width: 14,
+                                                        height: 14,
+                                                        borderRadius: '3px',
+                                                        border: '1px solid #64748b',
+                                                        background: master.color,
+                                                        boxShadow: isLightHexColor(master.color) ? 'inset 0 0 0 1px #334155' : 'none',
+                                                    }}
+                                                />
+                                            )}
+                                            sx={{
+                                                borderColor: '#94a3b8',
+                                                color: '#0f172a',
+                                                backgroundColor: selectedBlockId === Number(master.id) ? '#e2e8f0' : '#ffffff',
+                                                '&:hover': {
+                                                    backgroundColor: selectedBlockId === Number(master.id) ? '#cbd5e1' : '#f8fafc',
+                                                    borderColor: '#64748b',
+                                                },
+                                            }}
+                                        >
+                                            {master.name}
+                                        </Button>
+                                    ))}
+                                </Stack>
+                            </Card>
+
+                            <Card variant="outlined" sx={{ p: 2 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>領域操作（各軸の両方向）</Typography>
+                                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                    <Button size="small" onClick={() => adjustBound('minX', 'expand')}>X- 拡張</Button>
+                                    <Button size="small" onClick={() => adjustBound('minX', 'shrink')}>X- 削除</Button>
+                                    <Button size="small" onClick={() => adjustBound('maxX', 'expand')}>X+ 拡張</Button>
+                                    <Button size="small" onClick={() => adjustBound('maxX', 'shrink')}>X+ 削除</Button>
+                                    <Button size="small" onClick={() => adjustBound('minY', 'expand')}>Y- 拡張</Button>
+                                    <Button size="small" onClick={() => adjustBound('minY', 'shrink')}>Y- 削除</Button>
+                                    <Button size="small" onClick={() => adjustBound('maxY', 'expand')}>Y+ 拡張</Button>
+                                    <Button size="small" onClick={() => adjustBound('maxY', 'shrink')}>Y+ 削除</Button>
+                                    <Button size="small" onClick={() => adjustBound('minZ', 'expand')}>Z- 拡張</Button>
+                                    <Button size="small" onClick={() => adjustBound('minZ', 'shrink')}>Z- 削除</Button>
+                                    <Button size="small" onClick={() => adjustBound('maxZ', 'expand')}>Z+ 拡張</Button>
+                                    <Button size="small" onClick={() => adjustBound('maxZ', 'shrink')}>Z+ 削除</Button>
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary">
+                                    範囲: X({bounds.minX}..{bounds.maxX}) / Y({bounds.minY}..{bounds.maxY}) / Z({bounds.minZ}..{bounds.maxZ})
+                                </Typography>
+                            </Card>
+
+                            <Card variant="outlined" sx={{ p: 2, borderStyle: 'dashed' }}>
+                                <Typography variant="subtitle2">便利ツール追加枠</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                    ここにショートカット・変換ツール・定型配置などを追加できます
+                                </Typography>
+                            </Card>
+                        </Stack>
+                    )}
                 </Card>
                 <Box
                     sx={{
