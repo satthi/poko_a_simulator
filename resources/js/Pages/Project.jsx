@@ -31,6 +31,7 @@ const MIN_SCALE = 0.4;
 const MAX_SCALE = 2.4;
 const AUTOSAVE_DELAY_MS = 8000;
 const PREVIEW_VIEWPORT_PX = 300;
+const PREVIEW_BASE_CELL_PX = 16;
 const TARGET_VISIBLE_CELLS = 20;
 const CHECKER_BG =
     'repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px';
@@ -634,13 +635,11 @@ export default function Project({ projectId }) {
     }, [blockData, loading, saving, isDirty]);
 
     const renderPlane = (z, { clickable, title, compact = false }) => {
-        const xCount = xList.length;
-        const yCount = yList.length;
-        const compactCellSize = Math.max(
-            2,
-            Math.floor((PREVIEW_VIEWPORT_PX - Math.max(0, xCount - 1)) / Math.max(1, xCount)),
-        );
-        const size = compact ? compactCellSize : CELL_PX;
+        const size = compact ? PREVIEW_BASE_CELL_PX : CELL_PX;
+        const previewTranslateRatio = PREVIEW_BASE_CELL_PX / CELL_PX;
+        const syncedScale = compact ? scale : 1;
+        const syncedOffsetX = compact ? offset.x * previewTranslateRatio : 0;
+        const syncedOffsetY = compact ? offset.y * previewTranslateRatio : 0;
 
         return (
             <Card sx={{ p: 1.5 }}>
@@ -651,17 +650,20 @@ export default function Project({ projectId }) {
                     sx={compact ? {
                         width: '100%',
                         height: PREVIEW_VIEWPORT_PX,
+                        position: 'relative',
                         border: '1px solid #e2e8f0',
                         borderRadius: 1,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
                         overflow: 'hidden',
                         backgroundColor: '#f8fafc',
                     } : undefined}
                 >
                     <Box
                         sx={{
+                            transform: compact ? `translate(${syncedOffsetX}px, ${syncedOffsetY}px) scale(${syncedScale})` : 'none',
+                            transformOrigin: '0 0',
+                            position: compact ? 'absolute' : 'static',
+                            top: compact ? 0 : 'auto',
+                            left: compact ? 0 : 'auto',
                             display: 'grid',
                             gridTemplateColumns: `repeat(${xList.length}, ${size}px)`,
                             gap: '1px',
@@ -837,7 +839,7 @@ export default function Project({ projectId }) {
                 <Box
                     sx={{
                         display: 'grid',
-                        gridTemplateColumns: { xs: '1fr', md: '7fr 3fr' },
+                        gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 7fr) minmax(320px, 3fr)' },
                         gap: 2,
                         alignItems: 'start',
                     }}
@@ -906,7 +908,7 @@ export default function Project({ projectId }) {
                         </Box>
                     </Card>
 
-                    <Stack spacing={2}>
+                    <Stack spacing={2} sx={{ minWidth: 0 }}>
                         <Card sx={{ p: 1.5 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
                                 <Typography variant="subtitle2">3Dプレビュー</Typography>
@@ -932,6 +934,10 @@ export default function Project({ projectId }) {
                                 <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive={false} />
                             </Box>
                         </Card>
+
+                        <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
+                            上下プレビューはメイン2Dのズーム・移動に連動します
+                        </Typography>
 
                         <Box>
                             {renderPlane(currentZ + 1, {
