@@ -8,8 +8,13 @@ import {
     Container,
     Dialog,
     DialogContent,
+    DialogTitle,
+    DialogActions,
     Divider,
     IconButton,
+    MenuItem,
+    Select,
+    Slider,
     Stack,
     TextField,
     Typography,
@@ -344,6 +349,12 @@ export default function Project({ projectId }) {
     const [copySourceZ, setCopySourceZ] = useState(0);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+
+    // ブロックマスタ追加ダイアログ
+    const [isAddMasterOpen, setIsAddMasterOpen] = useState(false);
+    const [newMaster, setNewMaster] = useState({ name: '', type: 'block', color: '#3b82f6', opacity: 100 });
+    const [addMasterSaving, setAddMasterSaving] = useState(false);
+    const [addMasterError, setAddMasterError] = useState('');
 
     const dragState = useRef({ panning: false, lastX: 0, lastY: 0, moved: false });
     const drawState = useRef({ drawing: false, changed: false, lastKey: null });
@@ -1279,9 +1290,14 @@ export default function Project({ projectId }) {
 
         return (
             <Card sx={{ p: 1.5 }}>
-                <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                    {title}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+                    <Typography variant="subtitle2">{title}</Typography>
+                    {clickable && hoverCoord && (
+                        <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 'bold', letterSpacing: 0.5 }}>
+                            X: {hoverCoord.x}　Y: {hoverCoord.y}
+                        </Typography>
+                    )}
+                </Box>
                 <Box
                     sx={compact ? {
                         width: '100%',
@@ -1319,6 +1335,8 @@ export default function Project({ projectId }) {
                             const isGuidePoint = shouldUseHoverGuide && !!hoverCoord && (x === hoverCoord.x && y === hoverCoord.y);
                             const isAdjacentPlane = z !== currentZ;
                             const isRangeAnchor = !!rangeFillAnchor && rangeFillAnchor.x === x && rangeFillAnchor.y === y && rangeFillAnchor.z === z;
+                            const isX10 = !compact && x % 10 === 0;
+                            const isY10 = !compact && y % 10 === 0;
                             return (
                                 <Box
                                     key={`${x}-${y}-${z}`}
@@ -1364,9 +1382,11 @@ export default function Project({ projectId }) {
                                     sx={{
                                         width: size,
                                         height: size,
-                                        background: blockColor ? blockColor : CHECKER_BG,
+                                        background: blockColor ? blockColor : (isX10 || isY10 ? 'repeating-conic-gradient(#b0bec5 0% 25%, #f1f5f9 0% 50%) 0 0 / 8px 8px' : CHECKER_BG),
                                         opacity: block ? Math.max(0.1, Number(block.opacity ?? 100) / 100) : 1,
                                         border: isCurrentLayer ? '1px solid #2563eb' : '1px solid #cbd5e1',
+                                        borderLeft: isX10 ? '2px solid #64748b' : undefined,
+                                        borderTop: isY10 ? '2px solid #64748b' : undefined,
                                         boxShadow: [
                                             showStrongBorder ? 'inset 0 0 0 1px #334155' : null,
                                             isGuideLine ? 'inset 0 0 0 1px rgba(37, 99, 235, 0.45)' : null,
@@ -1454,6 +1474,10 @@ export default function Project({ projectId }) {
                         <Stack spacing={2} sx={{ mt: 2 }}>
                             <Card variant="outlined" sx={{ p: 2 }}>
                                 <Typography variant="subtitle2" sx={{ mb: 1 }}>配置ブロック</Typography>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                    <Typography variant="subtitle2">配置ブロック</Typography>
+                                    <Button size="small" variant="outlined" onClick={() => { setNewMaster({ name: '', type: 'block', color: '#3b82f6', opacity: 100 }); setAddMasterError(''); setIsAddMasterOpen(true); }}>＋ 新規追加</Button>
+                                </Box>
                                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 1, mb: 1 }}>
                                     <Button
                                         variant={selectedBlockId === null ? 'contained' : 'outlined'}
@@ -1918,6 +1942,97 @@ export default function Project({ projectId }) {
                     </DialogContent>
                 </Dialog>
 
+                {/* ブロックマスタ追加ダイアログ */}
+                <Dialog open={isAddMasterOpen} onClose={() => setIsAddMasterOpen(false)} maxWidth="xs" fullWidth>
+                    <DialogTitle>ブロックマスタを追加</DialogTitle>
+                    <DialogContent>
+                        <Stack spacing={2} sx={{ mt: 1 }}>
+                            {addMasterError && <Alert severity="error">{addMasterError}</Alert>}
+                            <TextField
+                                label="名前"
+                                size="small"
+                                value={newMaster.name}
+                                onChange={(e) => setNewMaster((p) => ({ ...p, name: e.target.value }))}
+                                fullWidth
+                                autoFocus
+                            />
+                            <Box>
+                                <Typography variant="caption" color="text.secondary">種類</Typography>
+                                <Select
+                                    size="small"
+                                    value={newMaster.type}
+                                    onChange={(e) => setNewMaster((p) => ({ ...p, type: e.target.value }))}
+                                    fullWidth
+                                >
+                                    <MenuItem value="block">ブロック</MenuItem>
+                                    <MenuItem value="decoration">装飾品</MenuItem>
+                                </Select>
+                            </Box>
+                            <Box>
+                                <Typography variant="caption" color="text.secondary">色</Typography>
+                                <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 0.5 }}>
+                                    <input
+                                        type="color"
+                                        value={newMaster.color}
+                                        onChange={(e) => setNewMaster((p) => ({ ...p, color: e.target.value }))}
+                                        style={{ width: 48, height: 36, border: 'none', cursor: 'pointer', borderRadius: 4 }}
+                                    />
+                                    <TextField
+                                        size="small"
+                                        value={newMaster.color}
+                                        onChange={(e) => setNewMaster((p) => ({ ...p, color: e.target.value }))}
+                                        inputProps={{ maxLength: 7 }}
+                                        sx={{ width: 120 }}
+                                    />
+                                    <Box sx={{ width: 32, height: 32, borderRadius: 1, border: '1px solid #94a3b8', backgroundColor: newMaster.color, flexShrink: 0 }} />
+                                </Stack>
+                            </Box>
+                            <Box>
+                                <Typography variant="caption" color="text.secondary">不透明度: {newMaster.opacity}%</Typography>
+                                <Slider
+                                    value={newMaster.opacity}
+                                    min={0} max={100} step={1}
+                                    onChange={(_, v) => setNewMaster((p) => ({ ...p, opacity: v }))}
+                                    size="small"
+                                />
+                            </Box>
+                        </Stack>
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={() => setIsAddMasterOpen(false)}>キャンセル</Button>
+                        <Button
+                            variant="contained"
+                            disabled={addMasterSaving || !newMaster.name.trim()}
+                            onClick={async () => {
+                                setAddMasterSaving(true);
+                                setAddMasterError('');
+                                try {
+                                    const res = await fetch('/api/blocks-masters', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                                        body: JSON.stringify(newMaster),
+                                    });
+                                    if (!res.ok) {
+                                        const data = await res.json().catch(() => ({}));
+                                        setAddMasterError(data?.message ?? '保存に失敗しました');
+                                        return;
+                                    }
+                                    const created = await res.json();
+                                    setMasters((prev) => [...prev, created]);
+                                    setSelectedBlockId(Number(created.id));
+                                    setIsAddMasterOpen(false);
+                                } catch {
+                                    setAddMasterError('通信エラーが発生しました');
+                                } finally {
+                                    setAddMasterSaving(false);
+                                }
+                            }}
+                        >
+                            {addMasterSaving ? '保存中...' : '追加'}
+                        </Button>
+                    </DialogActions>
+                </Dialog>
+
                 <Dialog
                     open={isWalkModeOpen}
                     onClose={() => setIsWalkModeOpen(false)}
@@ -1950,6 +2065,55 @@ export default function Project({ projectId }) {
                         </Box>
                     </DialogContent>
                 </Dialog>
+
+                {/* ブロック使用数集計 */}
+                <Card sx={{ p: 2 }}>
+                    <Typography variant="subtitle1" sx={{ mb: 1.5 }}>ブロック使用数集計</Typography>
+                    {blockData && masters.length > 0 ? (() => {
+                        const counts = {};
+                        Object.values(blockData.cells).forEach((blockId) => {
+                            const id = Number(blockId);
+                            counts[id] = (counts[id] ?? 0) + 1;
+                        });
+                        const total = Object.values(counts).reduce((s, n) => s + n, 0);
+                        const rows = Object.entries(counts)
+                            .map(([id, count]) => ({ master: mastersById.get(Number(id)), id: Number(id), count }))
+                            .sort((a, b) => b.count - a.count);
+                        return (
+                            <Box>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1.5 }}>
+                                    {rows.map(({ master, id, count }) => (
+                                        <Box
+                                            key={id}
+                                            sx={{
+                                                display: 'flex', alignItems: 'center', gap: 0.75,
+                                                border: '1px solid #e2e8f0', borderRadius: 1, px: 1.5, py: 0.75,
+                                                backgroundColor: '#f8fafc',
+                                            }}
+                                        >
+                                            <Box sx={{
+                                                width: 16, height: 16, borderRadius: '3px', flexShrink: 0,
+                                                backgroundColor: master?.color ?? '#ccc',
+                                                border: '1px solid rgba(0,0,0,0.15)',
+                                            }} />
+                                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                                {master?.name ?? `ID:${id}`}
+                                            </Typography>
+                                            <Typography variant="body2" color="text.secondary">
+                                                × {count.toLocaleString()}
+                                            </Typography>
+                                        </Box>
+                                    ))}
+                                </Box>
+                                <Typography variant="caption" color="text.secondary">
+                                    合計 {total.toLocaleString()} ブロック（{rows.length} 種類）
+                                </Typography>
+                            </Box>
+                        );
+                    })() : (
+                        <Typography variant="body2" color="text.secondary">ブロックが配置されていません</Typography>
+                    )}
+                </Card>
             </Stack>
         </Container>
     );
