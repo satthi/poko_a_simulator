@@ -16,5 +16,6 @@ class BlocksMaster extends Model
         'type',
         'color',
         'opacity',
+        'is_decoration',
     ];
 }

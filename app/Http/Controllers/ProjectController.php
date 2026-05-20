@@ -144,19 +144,107 @@ class ProjectController extends Controller
 
         $cells = [];
 
-        // New format: { cells: { "x,y,z": blockId }, bounds: {...} }
+        // New format: { cells: { "x,y,z": blockId | { type: "subcell_group", subcells: [...] } }, bounds: {...} }
         if (isset($data['cells']) && is_array($data['cells'])) {
-            foreach ($data['cells'] as $key => $blockId) {
+            foreach ($data['cells'] as $key => $cellValue) {
                 if (!is_string($key) || !preg_match('/^-?\d+,-?\d+,-?\d+$/', $key)) {
                     continue;
                 }
 
-                $normalizedBlockId = (int) $blockId;
-                if ($normalizedBlockId <= 0) {
-                    continue;
-                }
+                // Check if cellValue is an object type (array in PHP)
+                if (is_array($cellValue)) {
+                    $type = $cellValue['type'] ?? null;
+                    
+                    // Handle block_with_subcells
+                    if ($type === 'block_with_subcells' && isset($cellValue['blockId'])) {
+                        $blockId = (int) $cellValue['blockId'];
+                        $rawSubcells = $cellValue['subcells'] ?? null;
+                        
+                        if (is_array($rawSubcells)) {
+                            $normalizedSubcells = array_fill(0, 4, null);
+                            $hasAnySubcell = false;
 
-                $cells[$key] = $normalizedBlockId;
+                            for ($i = 0; $i < 4; $i++) {
+                                $rawSubcell = $rawSubcells[$i] ?? null;
+                                if (!is_array($rawSubcell)) {
+                                    continue;
+                                }
+
+                                $masterId = (int) ($rawSubcell['masterId'] ?? 0);
+                                if ($masterId <= 0) {
+                                    continue;
+                                }
+
+                                $rotation = (int) ($rawSubcell['rotation'] ?? 0);
+                                $rotation = (($rotation % 360) + 360) % 360;
+
+                                $normalizedSubcells[$i] = [
+                                    'masterId' => $masterId,
+                                    'rotation' => $rotation,
+                                ];
+                                $hasAnySubcell = true;
+                            }
+
+                            if ($hasAnySubcell) {
+                                $cells[$key] = [
+                                    'type' => 'block_with_subcells',
+                                    'blockId' => $blockId,
+                                    'subcells' => $normalizedSubcells,
+                                ];
+                            } else if ($blockId > 0) {
+                                $cells[$key] = $blockId;
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    // Handle subcell_group
+                    if ($type !== 'subcell_group') {
+                        continue;
+                    }
+
+                    $rawSubcells = $cellValue['subcells'] ?? null;
+                    if (!is_array($rawSubcells)) {
+                        continue;
+                    }
+
+                    $normalizedSubcells = array_fill(0, 4, null);
+                    $hasAnySubcell = false;
+
+                    for ($i = 0; $i < 4; $i++) {
+                        $rawSubcell = $rawSubcells[$i] ?? null;
+                        if (!is_array($rawSubcell)) {
+                            continue;
+                        }
+
+                        $masterId = (int) ($rawSubcell['masterId'] ?? 0);
+                        if ($masterId <= 0) {
+                            continue;
+                        }
+
+                        $rotation = (int) ($rawSubcell['rotation'] ?? 0);
+                        $rotation = (($rotation % 360) + 360) % 360;
+
+                        $normalizedSubcells[$i] = [
+                            'masterId' => $masterId,
+                            'rotation' => $rotation,
+                        ];
+                        $hasAnySubcell = true;
+                    }
+
+                    if ($hasAnySubcell) {
+                        $cells[$key] = [
+                            'type' => 'subcell_group',
+                            'subcells' => $normalizedSubcells,
+                        ];
+                    }
+                } else {
+                    // Regular blockId (integer type)
+                    $normalizedBlockId = (int) $cellValue;
+                    if ($normalizedBlockId > 0) {
+                        $cells[$key] = $normalizedBlockId;
+                    }
+                }
             }
         }
 

@@ -47,6 +47,12 @@ const SMALL_3D_MAX_BLOCKS = 20000;
 const LARGE_3D_MAX_BLOCKS = 120000;
 const CHECKER_BG =
     'repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px';
+const SUBCELL_OFFSETS = [
+    { x: -0.25, y: -0.25 },
+    { x: 0.25, y: -0.25 },
+    { x: -0.25, y: 0.25 },
+    { x: 0.25, y: 0.25 },
+];
 
 const normalizeBlockData = (blockData, fallbackSize) => {
     const boundsFromSize = {
@@ -132,6 +138,31 @@ const isLightHexColor = (hex) => {
     return luminance >= 190;
 };
 
+const isDecorationMaster = (master) => !!master && (Boolean(master.is_decoration) || master.type === 'decoration');
+const isSubcellGroup = (value) => !!value && typeof value === 'object' && value.type === 'subcell_group' && Array.isArray(value.subcells);
+const isBlockWithSubcells = (value) => (
+    !!value
+    && typeof value === 'object'
+    && value.type === 'block_with_subcells'
+    && Number.isFinite(Number(value.blockId))
+    && Array.isArray(value.subcells)
+);
+const getCellBlockId = (value) => {
+    if (Number.isFinite(Number(value))) {
+        return Number(value);
+    }
+    if (isBlockWithSubcells(value)) {
+        return Number(value.blockId);
+    }
+    return null;
+};
+const getCellSubcells = (value) => {
+    if (isSubcellGroup(value) || isBlockWithSubcells(value)) {
+        return value.subcells;
+    }
+    return null;
+};
+
 function WalkControls() {
     const controlsRef = useRef();
     const keys = useRef({ w: false, a: false, s: false, d: false, up: false, down: false });
@@ -183,18 +214,25 @@ function WalkControls() {
     return <PointerLockControls ref={controlsRef} />;
 }
 
-function WalkScene({ blocks, bounds, maxBlocks }) {
+function WalkScene({ blocks, decorations, bounds, maxBlocks }) {
     const sampledBlocks = useMemo(() => {
         if (!maxBlocks || blocks.length <= maxBlocks) return blocks;
         const step = Math.ceil(blocks.length / maxBlocks);
         return blocks.filter((_, i) => i % step === 0);
     }, [blocks, maxBlocks]);
 
+    const sampledDecorations = useMemo(() => {
+        if (!maxBlocks || decorations.length <= maxBlocks) return decorations;
+        const step = Math.ceil(decorations.length / maxBlocks);
+        return decorations.filter((_, i) => i % step === 0);
+    }, [decorations, maxBlocks]);
+
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerY = (bounds.minY + bounds.maxY) / 2;
     const eyeHeight = bounds.minZ + 1.5;
     const sizeX = Math.max(1, bounds.maxX - bounds.minX + 1);
     const sizeY = Math.max(1, bounds.maxY - bounds.minY + 1);
+    const groundLevel = bounds.minZ - 0.5;
 
     // このシーンはThree.js標準(Y-up)で描画する
     // シーン座標(x, y, z) → Three.js座標(x, z, y) でZが高さになる
@@ -212,7 +250,21 @@ function WalkScene({ blocks, bounds, maxBlocks }) {
                 </mesh>
             ))}
 
-            <mesh position={[centerX, bounds.minZ - 0.5, centerY]} rotation={[-Math.PI / 2, 0, 0]}>
+            {sampledDecorations.map((decoration) => (
+                <mesh
+                    key={decoration.key}
+                    position={[decoration.x, decoration.z, decoration.y]}
+                >
+                    <boxGeometry args={[0.46, 0.08, 0.46]} />
+                    <meshStandardMaterial
+                        color={decoration.color}
+                        transparent
+                        opacity={decoration.opacity}
+                    />
+                </mesh>
+            ))}
+
+            <mesh position={[centerX, groundLevel, centerY]} rotation={[-Math.PI / 2, 0, 0]}>
                 <planeGeometry args={[sizeX + 20, sizeY + 20]} />
                 <meshStandardMaterial color="#5a8f3c" />
             </mesh>
@@ -242,7 +294,7 @@ function CameraController({ cameraPosition, cameraTarget }) {
     return null;
 }
 
-function BlocksScene({ blocks, bounds, interactive, maxBlocks, cameraPosition, cameraTarget }) {
+function BlocksScene({ blocks, decorations, bounds, interactive, maxBlocks, cameraPosition, cameraTarget }) {
     const sampledBlocks = useMemo(() => {
         if (!maxBlocks || blocks.length <= maxBlocks) {
             return blocks;
@@ -251,6 +303,15 @@ function BlocksScene({ blocks, bounds, interactive, maxBlocks, cameraPosition, c
         const step = Math.ceil(blocks.length / maxBlocks);
         return blocks.filter((_, index) => index % step === 0);
     }, [blocks, maxBlocks]);
+
+    const sampledDecorations = useMemo(() => {
+        if (!maxBlocks || decorations.length <= maxBlocks) {
+            return decorations;
+        }
+
+        const step = Math.ceil(decorations.length / maxBlocks);
+        return decorations.filter((_, index) => index % step === 0);
+    }, [decorations, maxBlocks]);
 
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerY = (bounds.minY + bounds.maxY) / 2;
@@ -288,6 +349,20 @@ function BlocksScene({ blocks, bounds, interactive, maxBlocks, cameraPosition, c
                         color={block.color}
                         transparent
                         opacity={block.opacity}
+                    />
+                </mesh>
+            ))}
+
+            {sampledDecorations.map((decoration) => (
+                <mesh
+                    key={decoration.key}
+                    position={[decoration.x, decoration.y, decoration.z]}
+                >
+                    <boxGeometry args={[0.46, 0.46, 0.08]} />
+                    <meshStandardMaterial
+                        color={decoration.color}
+                        transparent
+                        opacity={decoration.opacity}
                     />
                 </mesh>
             ))}
@@ -351,6 +426,11 @@ export default function Project({ projectId }) {
     const [filterCopyBlockIds, setFilterCopyBlockIds] = useState([]);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+
+    // サブセル装飾モード
+    const [isSubcellMode, setIsSubcellMode] = useState(false);
+    const [selectedSubcellIndices, setSelectedSubcellIndices] = useState([0]);
+    const [editingDecorationMasterId, setEditingDecorationMasterId] = useState(null);
 
     // ブロックマスタ追加ダイアログ
     const [isAddMasterOpen, setIsAddMasterOpen] = useState(false);
@@ -479,6 +559,16 @@ export default function Project({ projectId }) {
         return map;
     }, [masters]);
 
+    const normalMasters = useMemo(
+        () => masters.filter((master) => !isDecorationMaster(master)),
+        [masters],
+    );
+
+    const decorationMasters = useMemo(
+        () => masters.filter((master) => isDecorationMaster(master)),
+        [masters],
+    );
+
     const bounds = blockData?.bounds;
     const xList = useMemo(() => {
         if (!bounds) {
@@ -595,21 +685,81 @@ export default function Project({ projectId }) {
         hasInitializedViewportRef.current = true;
     }, [loading, bounds]);
 
-    const placeBlock = (x, y, z) => {
+    const placeBlock = (x, y, z, subcellIndicesOverride = null) => {
         const key = coordKey(x, y, z);
         return updateBlockData((draft) => {
+            if (isSubcellMode) {
+                const selectedIndices = Array.isArray(subcellIndicesOverride)
+                    ? subcellIndicesOverride
+                    : selectedSubcellIndices;
+                const targetSubcellIndices = [...new Set(selectedIndices)]
+                    .filter((index) => Number.isInteger(index) && index >= 0 && index <= 3);
+
+                if (targetSubcellIndices.length === 0) {
+                    return draft;
+                }
+
+                const existingValue = draft.cells[key];
+                const existingBlockId = getCellBlockId(existingValue);
+                const existingSubcells = getCellSubcells(existingValue);
+                const nextSubcells = Array.isArray(existingSubcells)
+                    ? [...existingSubcells]
+                    : [null, null, null, null];
+
+                targetSubcellIndices.forEach((subcellIndex) => {
+                    if (editingDecorationMasterId === null) {
+                        nextSubcells[subcellIndex] = null;
+                    } else {
+                        nextSubcells[subcellIndex] = {
+                            masterId: Number(editingDecorationMasterId),
+                        };
+                    }
+                });
+
+                const hasAnyDecoration = nextSubcells.some((subcell) => !!subcell);
+                if (hasAnyDecoration) {
+                    if (existingBlockId !== null) {
+                        draft.cells[key] = {
+                            type: 'block_with_subcells',
+                            blockId: existingBlockId,
+                            subcells: nextSubcells,
+                        };
+                    } else {
+                        draft.cells[key] = {
+                            type: 'subcell_group',
+                            subcells: nextSubcells,
+                        };
+                    }
+                } else if (existingBlockId !== null) {
+                    draft.cells[key] = existingBlockId;
+                } else {
+                    delete draft.cells[key];
+                }
+                return draft;
+            }
+
             if (selectedBlockId === null) {
                 delete draft.cells[key];
             } else {
-                draft.cells[key] = Number(selectedBlockId);
+                const existingSubcells = getCellSubcells(draft.cells[key]);
+                if (Array.isArray(existingSubcells) && existingSubcells.some((subcell) => !!subcell)) {
+                    draft.cells[key] = {
+                        type: 'block_with_subcells',
+                        blockId: Number(selectedBlockId),
+                        subcells: [...existingSubcells],
+                    };
+                } else {
+                    draft.cells[key] = Number(selectedBlockId);
+                }
             }
+
             return draft;
         }, { recordHistory: false });
     };
 
-    const startDrawingAt = (x, y, z) => {
+    const startDrawingAt = (x, y, z, subcellIndicesOverride = null) => {
         drawState.current = { drawing: true, changed: false, lastKey: null };
-        const changed = placeBlock(x, y, z);
+        const changed = placeBlock(x, y, z, subcellIndicesOverride);
         drawState.current.changed = changed;
         drawState.current.lastKey = coordKey(x, y, z);
     };
@@ -719,8 +869,8 @@ export default function Project({ projectId }) {
                 if (z !== currentZ) {
                     nextCells[key] = blockId;
                 }
-                if (z === sourceZ) {
-                    copiedCells.push({ x, y, blockId });
+                if (z === sourceZ && Number.isFinite(Number(getCellBlockId(blockId)))) {
+                    copiedCells.push({ x, y, blockId: Number(getCellBlockId(blockId)) });
                 }
             });
 
@@ -763,9 +913,10 @@ export default function Project({ projectId }) {
             const copiedCells = [];
             Object.entries(draft.cells).forEach(([key, blockId]) => {
                 const [, , z] = key.split(',').map(Number);
-                if (z === sourceZ && targetIds.has(Number(blockId))) {
+                const sourceBlockId = getCellBlockId(blockId);
+                if (z === sourceZ && sourceBlockId !== null && targetIds.has(sourceBlockId)) {
                     const [x, y] = key.split(',').map(Number);
-                    copiedCells.push({ x, y, blockId });
+                    copiedCells.push({ x, y, blockId: sourceBlockId });
                 }
             });
             copiedCells.forEach(({ x, y, blockId }) => {
@@ -820,7 +971,7 @@ export default function Project({ projectId }) {
 
             const getCellId = (x, y) => {
                 const raw = draft.cells[coordKey(x, y, currentZ)];
-                return Number.isFinite(Number(raw)) ? Number(raw) : null;
+                return getCellBlockId(raw);
             };
 
             const queue = [[startX, startY]];
@@ -1039,28 +1190,64 @@ export default function Project({ projectId }) {
     };
 
     const getBlockForCell = (x, y, z) => {
-        const id = Number(blockData?.cells?.[coordKey(x, y, z)] ?? 0);
+        const cellValue = blockData?.cells?.[coordKey(x, y, z)];
+        const id = getCellBlockId(cellValue);
+        if (!Number.isFinite(Number(id))) {
+            return null;
+        }
         return mastersById.get(id) ?? null;
     };
 
-    const blocksFor3D = useMemo(() => {
+    const sceneData3D = useMemo(() => {
         if (!blockData?.cells) {
-            return [];
+            return { blocks: [], decorations: [] };
         }
 
-        return Object.entries(blockData.cells).map(([key, blockId]) => {
-            const [x, y, z] = key.split(',').map(Number);
-            const master = mastersById.get(Number(blockId));
+        const blocks = [];
+        const decorations = [];
 
-            return {
-                key,
-                x,
-                y,
-                z,
-                color: master?.color ?? '#94a3b8',
-                opacity: Math.max(0.1, Number(master?.opacity ?? 100) / 100),
-            };
+        Object.entries(blockData.cells).forEach(([key, value]) => {
+            const [x, y, z] = key.split(',').map(Number);
+            const blockId = getCellBlockId(value);
+            if (blockId !== null) {
+                const master = mastersById.get(blockId);
+                blocks.push({
+                    key,
+                    x,
+                    y,
+                    z,
+                    color: master?.color ?? '#94a3b8',
+                    opacity: Math.max(0.1, Number(master?.opacity ?? 100) / 100),
+                });
+            }
+
+            const subcells = getCellSubcells(value);
+            if (!subcells) {
+                return;
+            }
+
+            subcells.forEach((subcell, index) => {
+                if (!subcell || !Number.isFinite(Number(subcell.masterId))) {
+                    return;
+                }
+
+                const master = mastersById.get(Number(subcell.masterId));
+                if (!master) {
+                    return;
+                }
+
+                decorations.push({
+                    key: `${key}:sub:${index}`,
+                    x: x + SUBCELL_OFFSETS[index].x,
+                    y: y + SUBCELL_OFFSETS[index].y,
+                    z: z + 0.5,
+                    color: master.color ?? '#64748b',
+                    opacity: Math.max(0.1, Number(master.opacity ?? 100) / 100),
+                });
+            });
         });
+
+        return { blocks, decorations };
     }, [blockData, mastersById]);
 
     const onWheel = (e) => {
@@ -1266,22 +1453,46 @@ export default function Project({ projectId }) {
         ctx.fillStyle = '#e2e8f0';
         ctx.fillRect(0, 0, width, height);
 
-        Object.entries(blockData?.cells ?? {}).forEach(([key, blockId]) => {
+        Object.entries(blockData?.cells ?? {}).forEach(([key, value]) => {
             const [x, y, z] = key.split(',').map(Number);
             if (z !== currentZ) {
                 return;
             }
-
-            const master = mastersById.get(Number(blockId));
             const px = Math.floor((x - bounds.minX) * scaleX);
             const py = Math.floor((y - bounds.minY) * scaleY);
             const pw = Math.max(1, Math.ceil(scaleX));
             const ph = Math.max(1, Math.ceil(scaleY));
 
-            ctx.fillStyle = master?.color ?? '#64748b';
-            ctx.globalAlpha = Math.max(0.2, Number(master?.opacity ?? 100) / 100);
-            ctx.fillRect(px, py, pw, ph);
-            ctx.globalAlpha = 1;
+            const blockId = getCellBlockId(value);
+            if (blockId !== null) {
+                const master = mastersById.get(blockId);
+                ctx.fillStyle = master?.color ?? '#64748b';
+                ctx.globalAlpha = Math.max(0.2, Number(master?.opacity ?? 100) / 100);
+                ctx.fillRect(px, py, pw, ph);
+                ctx.globalAlpha = 1;
+            }
+
+            const subcells = getCellSubcells(value);
+            if (!subcells) {
+                return;
+            }
+
+            subcells.forEach((subcell, index) => {
+                if (!subcell || !Number.isFinite(Number(subcell.masterId))) {
+                    return;
+                }
+
+                const master = mastersById.get(Number(subcell.masterId));
+                const subW = Math.max(1, Math.ceil(pw / 2));
+                const subH = Math.max(1, Math.ceil(ph / 2));
+                const subX = px + (index % 2) * subW;
+                const subY = py + (index >= 2 ? subH : 0);
+
+                ctx.fillStyle = master?.color ?? '#64748b';
+                ctx.globalAlpha = Math.max(0.2, Number(master?.opacity ?? 100) / 100);
+                ctx.fillRect(subX, subY, subW, subH);
+                ctx.globalAlpha = 1;
+            });
         });
 
         const visibleMinX = visibleXList[0] ?? bounds.minX;
@@ -1369,7 +1580,9 @@ export default function Project({ projectId }) {
                         }}
                     >
                         {sourceYList.map((y) => sourceXList.map((x) => {
+                            const rawCellValue = blockData?.cells?.[coordKey(x, y, z)];
                             const block = getBlockForCell(x, y, z);
+                            const subcellValues = getCellSubcells(rawCellValue);
                             const isCurrentLayer = z === currentZ;
                             const blockColor = block?.color ?? null;
                             const showStrongBorder = blockColor ? isLightHexColor(blockColor) : false;
@@ -1405,7 +1618,18 @@ export default function Project({ projectId }) {
                                             }
                                             return;
                                         }
-                                        startDrawingAt(x, y, z);
+                                        if (isSubcellMode) {
+                                            const rect = e.currentTarget.getBoundingClientRect();
+                                            const localX = e.clientX - rect.left;
+                                            const localY = e.clientY - rect.top;
+                                            const clickedSubcellIndex = (localY < rect.height / 2 ? 0 : 2) + (localX < rect.width / 2 ? 0 : 1);
+                                            const targetSubcellIndices = selectedSubcellIndices.length > 1
+                                                ? selectedSubcellIndices
+                                                : [clickedSubcellIndex];
+                                            startDrawingAt(x, y, z, targetSubcellIndices);
+                                        } else {
+                                            startDrawingAt(x, y, z);
+                                        }
                                         if (shouldUseHoverGuide) {
                                             setHoverCoord({ x, y });
                                         }
@@ -1422,9 +1646,12 @@ export default function Project({ projectId }) {
                                     }}
                                     title={`x:${x}, y:${y}, z:${z}`}
                                     sx={{
+                                        position: 'relative',
                                         width: size,
                                         height: size,
-                                        background: blockColor ? blockColor : (isX10 || isY10 ? 'repeating-conic-gradient(#b0bec5 0% 25%, #f1f5f9 0% 50%) 0 0 / 8px 8px' : CHECKER_BG),
+                                        background: blockColor
+                                            ? blockColor
+                                            : (isX10 || isY10 ? 'repeating-conic-gradient(#b0bec5 0% 25%, #f1f5f9 0% 50%) 0 0 / 8px 8px' : CHECKER_BG),
                                         opacity: block ? Math.max(0.1, Number(block.opacity ?? 100) / 100) : 1,
                                         border: isCurrentLayer ? '1px solid #2563eb' : '1px solid #cbd5e1',
                                         borderLeft: isX10 ? '2px solid #64748b' : undefined,
@@ -1437,7 +1664,28 @@ export default function Project({ projectId }) {
                                         ].filter(Boolean).join(', '),
                                         cursor: clickable ? ((isRangeFillMode || isBucketFillMode || isEllipseMode) ? 'crosshair' : 'pointer') : 'default',
                                     }}
-                                />
+                                >
+                                    {subcellValues && subcellValues.map((subcell, subIndex) => {
+                                        const master = subcell ? mastersById.get(Number(subcell.masterId)) : null;
+                                        const isSelectedSubcell = isSubcellMode && isCurrentLayer && selectedSubcellIndices.includes(subIndex);
+                                        return (
+                                            <Box
+                                                key={`${x}-${y}-${z}-sub-${subIndex}`}
+                                                sx={{
+                                                    position: 'absolute',
+                                                    width: '50%',
+                                                    height: '50%',
+                                                    left: subIndex % 2 === 1 ? '50%' : 0,
+                                                    top: subIndex >= 2 ? '50%' : 0,
+                                                    border: '1px solid rgba(51, 65, 85, 0.35)',
+                                                    backgroundColor: master?.color ?? 'transparent',
+                                                    opacity: master ? Math.max(0.15, Number(master.opacity ?? 100) / 100) : 0.15,
+                                                    boxShadow: isSelectedSubcell ? 'inset 0 0 0 2px rgba(15, 23, 42, 0.9)' : 'none',
+                                                }}
+                                            />
+                                        );
+                                    })}
+                                </Box>
                             );
                         }))}
                     </Box>
@@ -1463,39 +1711,116 @@ export default function Project({ projectId }) {
     }
 
     return (
-        <Container maxWidth="xl" sx={{ py: 3 }}>
-            <Stack spacing={2}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <Link href="/projects">
-                        <IconButton color="primary" title="プロジェクト一覧に戻る">
-                            <ArrowBackIcon />
-                        </IconButton>
-                    </Link>
-                    <Box sx={{ flexGrow: 1 }}>
-                        <Typography variant="h5">{project.title}</Typography>
-                        <Typography variant="body2" color="text.secondary">
-                            プロジェクトID: {project.id}
-                        </Typography>
-                        {autoSaveMessage && (
-                            <Typography variant="caption" color="text.secondary">
-                                {autoSaveMessage}
-                            </Typography>
-                        )}
+        <>
+            {/* 固定ヘッダー: 配置ブロック */}
+            <Box
+                sx={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    zIndex: 1000,
+                    backgroundColor: '#ffffff',
+                    borderBottom: '1px solid #e2e8f0',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                    p: 2,
+                }}
+            >
+                <Container maxWidth="xl">
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="subtitle2" sx={{ mb: 0.75, fontWeight: 600 }}>配置ブロック</Typography>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                                <Button
+                                    variant={selectedBlockId === null ? 'contained' : 'outlined'}
+                                    color="inherit"
+                                    size="small"
+                                    onClick={() => setSelectedBlockId(null)}
+                                    startIcon={<RemoveIcon />}
+                                    sx={{ minWidth: 'auto' }}
+                                >
+                                    消しゴム
+                                </Button>
+                                {normalMasters.map((master) => (
+                                    <Button
+                                        key={master.id}
+                                        variant={selectedBlockId === Number(master.id) ? 'contained' : 'outlined'}
+                                        size="small"
+                                        onClick={() => setSelectedBlockId(Number(master.id))}
+                                        startIcon={(
+                                            <Box
+                                                sx={{
+                                                    width: 12,
+                                                    height: 12,
+                                                    borderRadius: '2px',
+                                                    border: '1px solid #64748b',
+                                                    background: master.color,
+                                                    boxShadow: isLightHexColor(master.color) ? 'inset 0 0 0 1px #334155' : 'none',
+                                                    flexShrink: 0,
+                                                }}
+                                            />
+                                        )}
+                                        sx={{
+                                            borderColor: '#94a3b8',
+                                            color: '#0f172a',
+                                            backgroundColor: selectedBlockId === Number(master.id) ? '#e2e8f0' : '#ffffff',
+                                            '&:hover': {
+                                                backgroundColor: selectedBlockId === Number(master.id) ? '#cbd5e1' : '#f8fafc',
+                                                borderColor: '#64748b',
+                                            },
+                                            minWidth: 'auto',
+                                        }}
+                                    >
+                                        {master.name}
+                                    </Button>
+                                ))}
+                            </Box>
+                        </Box>
+                        <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => { setNewMaster({ name: '', type: 'block', color: '#3b82f6', opacity: 100 }); setAddMasterError(''); setIsAddMasterOpen(true); }}
+                            sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >
+                            ＋ 新規追加
+                        </Button>
                     </Box>
-                    <Button variant="outlined" onClick={undo} disabled={!canUndo}>Undo</Button>
-                    <Button variant="outlined" onClick={redo} disabled={!canRedo}>Redo</Button>
-                    <Button
-                        variant="contained"
-                        startIcon={<SaveIcon />}
-                        onClick={saveProject}
-                        disabled={saving}
-                    >
-                        {saving ? '保存中...' : '保存'}
-                    </Button>
-                </Box>
+                </Container>
+            </Box>
 
-                {error && <Alert severity="error">{error}</Alert>}
-                {success && <Alert severity="success">{success}</Alert>}
+            <Container maxWidth="xl" sx={{ py: 3, pt: 28 }}>
+                <Stack spacing={2}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <Link href="/projects">
+                            <IconButton color="primary" title="プロジェクト一覧に戻る">
+                                <ArrowBackIcon />
+                            </IconButton>
+                        </Link>
+                        <Box sx={{ flexGrow: 1 }}>
+                            <Typography variant="h5">{project.title}</Typography>
+                            <Typography variant="body2" color="text.secondary">
+                                プロジェクトID: {project.id}
+                            </Typography>
+                            {autoSaveMessage && (
+                                <Typography variant="caption" color="text.secondary">
+                                    {autoSaveMessage}
+                                </Typography>
+                            )}
+                        </Box>
+                        <Button variant="outlined" onClick={undo} disabled={!canUndo}>Undo</Button>
+                        <Button variant="outlined" onClick={redo} disabled={!canRedo}>Redo</Button>
+                        <Button
+                            variant="contained"
+                            startIcon={<SaveIcon />}
+                            onClick={saveProject}
+                            disabled={saving}
+                        >
+                            {saving ? '保存中...' : '保存'}
+                        </Button>
+                    </Box>
+
+                    {error && <Alert severity="error">{error}</Alert>}
+                    {success && <Alert severity="success">{success}</Alert>}
 
                 <Card sx={{ p: 2 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1515,53 +1840,97 @@ export default function Project({ projectId }) {
                     {isUtilityMenuOpen && (
                         <Stack spacing={2} sx={{ mt: 2 }}>
                             <Card variant="outlined" sx={{ p: 2 }}>
-                                <Typography variant="subtitle2" sx={{ mb: 1 }}>配置ブロック</Typography>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                                    <Typography variant="subtitle2">配置ブロック</Typography>
-                                    <Button size="small" variant="outlined" onClick={() => { setNewMaster({ name: '', type: 'block', color: '#3b82f6', opacity: 100 }); setAddMasterError(''); setIsAddMasterOpen(true); }}>＋ 新規追加</Button>
-                                </Box>
-                                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 1, mb: 1 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>装飾サブセル編集 (2x2)</Typography>
+                                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
                                     <Button
-                                        variant={selectedBlockId === null ? 'contained' : 'outlined'}
-                                        color="inherit"
                                         size="small"
-                                        onClick={() => setSelectedBlockId(null)}
-                                        startIcon={<RemoveIcon />}
+                                        variant={isSubcellMode ? 'contained' : 'outlined'}
+                                        onClick={() => {
+                                            setIsSubcellMode((prev) => !prev);
+                                            setError('');
+                                        }}
                                     >
-                                        消しゴム
+                                        {isSubcellMode ? 'サブセル編集ON' : 'サブセル編集OFF'}
                                     </Button>
-                                    {masters.map((master) => (
-                                        <Button
-                                            key={master.id}
-                                            variant={selectedBlockId === Number(master.id) ? 'contained' : 'outlined'}
-                                            size="small"
-                                            onClick={() => setSelectedBlockId(Number(master.id))}
-                                            startIcon={(
-                                                <Box
-                                                    sx={{
-                                                        width: 14,
-                                                        height: 14,
-                                                        borderRadius: '3px',
-                                                        border: '1px solid #64748b',
-                                                        background: master.color,
-                                                        boxShadow: isLightHexColor(master.color) ? 'inset 0 0 0 1px #334155' : 'none',
-                                                    }}
-                                                />
-                                            )}
-                                            sx={{
-                                                borderColor: '#94a3b8',
-                                                color: '#0f172a',
-                                                backgroundColor: selectedBlockId === Number(master.id) ? '#e2e8f0' : '#ffffff',
-                                                '&:hover': {
-                                                    backgroundColor: selectedBlockId === Number(master.id) ? '#cbd5e1' : '#f8fafc',
-                                                    borderColor: '#64748b',
-                                                },
-                                            }}
-                                        >
-                                            {master.name}
-                                        </Button>
-                                    ))}
-                                </Box>
+                                    <Typography variant="caption" color="text.secondary">
+                                        ON時は4分割を複数選択して同時配置できます
+                                    </Typography>
+                                </Stack>
+
+                                {isSubcellMode && (
+                                    <Stack spacing={1.25}>
+                                        <Box>
+                                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                                装飾種類
+                                            </Typography>
+                                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                                                <Button
+                                                    size="small"
+                                                    variant={editingDecorationMasterId === null ? 'contained' : 'outlined'}
+                                                    color="inherit"
+                                                    onClick={() => setEditingDecorationMasterId(null)}
+                                                >
+                                                    消しゴム
+                                                </Button>
+                                                {decorationMasters.map((master) => (
+                                                    <Button
+                                                        key={`dec-${master.id}`}
+                                                        size="small"
+                                                        variant={editingDecorationMasterId === Number(master.id) ? 'contained' : 'outlined'}
+                                                        onClick={() => setEditingDecorationMasterId(Number(master.id))}
+                                                        startIcon={(
+                                                            <Box
+                                                                sx={{
+                                                                    width: 12,
+                                                                    height: 12,
+                                                                    borderRadius: '2px',
+                                                                    border: '1px solid #64748b',
+                                                                    background: master.color,
+                                                                }}
+                                                            />
+                                                        )}
+                                                    >
+                                                        {master.name}
+                                                    </Button>
+                                                ))}
+                                            </Box>
+                                        </Box>
+
+                                        <Box>
+                                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                                選択中サブセル: {selectedSubcellIndices.length > 0 ? selectedSubcellIndices.map((index) => index + 1).join(', ') : '未選択'}
+                                            </Typography>
+                                            <Box sx={{ width: 88, height: 88, border: '1px solid #94a3b8', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1px', backgroundColor: '#94a3b8' }}>
+                                                {[0, 1, 2, 3].map((index) => (
+                                                    <Box
+                                                        key={`picker-sub-${index}`}
+                                                        onClick={() => {
+                                                            setSelectedSubcellIndices((prev) => {
+                                                                const exists = prev.includes(index);
+                                                                if (exists) {
+                                                                    const next = prev.filter((value) => value !== index);
+                                                                    return next.length > 0 ? next : [index];
+                                                                }
+                                                                return [...prev, index].sort((a, b) => a - b);
+                                                            });
+                                                        }}
+                                                        sx={{
+                                                            backgroundColor: selectedSubcellIndices.includes(index) ? '#bfdbfe' : '#ffffff',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            fontSize: 11,
+                                                            cursor: 'pointer',
+                                                            userSelect: 'none',
+                                                        }}
+                                                    >
+                                                        {index + 1}
+                                                    </Box>
+                                                ))}
+                                            </Box>
+                                        </Box>
+                                    </Stack>
+                                )}
                             </Card>
 
                             <Card variant="outlined" sx={{ p: 2 }}>
@@ -1737,7 +2106,7 @@ export default function Project({ projectId }) {
                                     コピーするブロックを選択（複数可）
                                 </Typography>
                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-                                    {masters.map((master) => {
+                                    {normalMasters.map((master) => {
                                         const selected = filterCopyBlockIds.includes(Number(master.id));
                                         return (
                                             <Button
@@ -1966,11 +2335,17 @@ export default function Project({ projectId }) {
                                     cursor: 'pointer',
                                 }}
                             >
-                                <BlocksScene blocks={blocksFor3D} bounds={bounds} interactive={false} maxBlocks={SMALL_3D_MAX_BLOCKS} />
+                                <BlocksScene
+                                    blocks={sceneData3D.blocks}
+                                    decorations={sceneData3D.decorations}
+                                    bounds={bounds}
+                                    interactive={false}
+                                    maxBlocks={SMALL_3D_MAX_BLOCKS}
+                                />
                             </Box>
-                            {blocksFor3D.length > SMALL_3D_MAX_BLOCKS && (
+                            {(sceneData3D.blocks.length + sceneData3D.decorations.length) > SMALL_3D_MAX_BLOCKS && (
                                 <Typography variant="caption" color="text.secondary">
-                                    描画負荷軽減のため3Dプレビューは間引いて表示中（{blocksFor3D.length.toLocaleString()}ブロック）
+                                    描画負荷軽減のため3Dプレビューは間引いて表示中（{(sceneData3D.blocks.length + sceneData3D.decorations.length).toLocaleString()}要素）
                                 </Typography>
                             )}
                         </Card>
@@ -2038,7 +2413,8 @@ export default function Project({ projectId }) {
                         </Stack>
                         <Box sx={{ height: '70vh', border: '1px solid #cbd5e1', borderRadius: 1, overflow: 'hidden' }}>
                             <BlocksScene
-                                blocks={blocksFor3D}
+                                blocks={sceneData3D.blocks}
+                                decorations={sceneData3D.decorations}
                                 bounds={bounds}
                                 interactive
                                 maxBlocks={LARGE_3D_MAX_BLOCKS}
@@ -2126,7 +2502,7 @@ export default function Project({ projectId }) {
                                     }
                                     const created = await res.json();
                                     setMasters((prev) => [...prev, created]);
-                                    setSelectedBlockId(Number(created.id));
+                                    setSelectedBlockId(isDecorationMaster(created) ? null : Number(created.id));
                                     setIsAddMasterOpen(false);
                                 } catch {
                                     setAddMasterError('通信エラーが発生しました');
@@ -2167,7 +2543,7 @@ export default function Project({ projectId }) {
                         </Box>
                         <Box sx={{ height: '85vh' }}>
                             {isWalkModeOpen && (
-                                <WalkScene blocks={blocksFor3D} bounds={bounds} maxBlocks={LARGE_3D_MAX_BLOCKS} />
+                                <WalkScene blocks={sceneData3D.blocks} decorations={sceneData3D.decorations} bounds={bounds} maxBlocks={LARGE_3D_MAX_BLOCKS} />
                             )}
                         </Box>
                     </DialogContent>
@@ -2177,21 +2553,43 @@ export default function Project({ projectId }) {
                 <Card sx={{ p: 2 }}>
                     <Typography variant="subtitle1" sx={{ mb: 1.5 }}>ブロック使用数集計</Typography>
                     {blockData && masters.length > 0 ? (() => {
-                        const counts = {};
-                        Object.values(blockData.cells).forEach((blockId) => {
-                            const id = Number(blockId);
-                            counts[id] = (counts[id] ?? 0) + 1;
+                        const blockCounts = {};
+                        const decorationCounts = {};
+
+                        Object.values(blockData.cells).forEach((cellValue) => {
+                            const blockId = getCellBlockId(cellValue);
+                            if (blockId !== null) {
+                                const id = Number(blockId);
+                                blockCounts[id] = (blockCounts[id] ?? 0) + 1;
+                            }
+
+                            const subcells = getCellSubcells(cellValue);
+                            if (!subcells) {
+                                return;
+                            }
+
+                            subcells.forEach((subcell) => {
+                                if (!subcell || !Number.isFinite(Number(subcell.masterId))) {
+                                    return;
+                                }
+                                const id = Number(subcell.masterId);
+                                decorationCounts[id] = (decorationCounts[id] ?? 0) + 1;
+                            });
                         });
-                        const total = Object.values(counts).reduce((s, n) => s + n, 0);
-                        const rows = Object.entries(counts)
-                            .map(([id, count]) => ({ master: mastersById.get(Number(id)), id: Number(id), count }))
+
+                        const rows = [
+                            ...Object.entries(blockCounts).map(([id, count]) => ({ master: mastersById.get(Number(id)), id: Number(id), count, category: 'block' })),
+                            ...Object.entries(decorationCounts).map(([id, count]) => ({ master: mastersById.get(Number(id)), id: Number(id), count, category: 'decoration' })),
+                        ]
                             .sort((a, b) => b.count - a.count);
+                        const total = rows.reduce((sum, row) => sum + row.count, 0);
+
                         return (
                             <Box>
                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1.5 }}>
-                                    {rows.map(({ master, id, count }) => (
+                                    {rows.map(({ master, id, count, category }) => (
                                         <Box
-                                            key={id}
+                                            key={`${category}-${id}`}
                                             sx={{
                                                 display: 'flex', alignItems: 'center', gap: 0.75,
                                                 border: '1px solid #e2e8f0', borderRadius: 1, px: 1.5, py: 0.75,
@@ -2205,6 +2603,7 @@ export default function Project({ projectId }) {
                                             }} />
                                             <Typography variant="body2" sx={{ fontWeight: 500 }}>
                                                 {master?.name ?? `ID:${id}`}
+                                                {category === 'decoration' ? ' (装飾)' : ''}
                                             </Typography>
                                             <Typography variant="body2" color="text.secondary">
                                                 × {count.toLocaleString()}
@@ -2213,7 +2612,7 @@ export default function Project({ projectId }) {
                                     ))}
                                 </Box>
                                 <Typography variant="caption" color="text.secondary">
-                                    合計 {total.toLocaleString()} ブロック（{rows.length} 種類）
+                                    合計 {total.toLocaleString()} 要素（{rows.length} 種類）
                                 </Typography>
                             </Box>
                         );
@@ -2223,5 +2622,6 @@ export default function Project({ projectId }) {
                 </Card>
             </Stack>
         </Container>
+        </>
     );
 }

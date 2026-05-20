@@ -22,10 +22,15 @@ class BlocksMasterController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255|unique:blocks_master',
-            'type' => 'required|string|max:100',
+            'type' => 'required|string|in:block,decoration',
             'color' => 'required|string|regex:/^#[0-9A-F]{6}$/i',
             'opacity' => 'required|integer|min:0|max:100',
+            'is_decoration' => 'sometimes|boolean',
         ]);
+
+        $validated['is_decoration'] = array_key_exists('is_decoration', $validated)
+            ? (bool) $validated['is_decoration']
+            : ($validated['type'] === 'decoration');
 
         return BlocksMaster::create($validated);
     }
@@ -45,10 +50,15 @@ class BlocksMasterController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255|unique:blocks_master,name,' . $blocksMaster->id,
-            'type' => 'required|string|max:100',
+            'type' => 'required|string|in:block,decoration',
             'color' => 'required|string|regex:/^#[0-9A-F]{6}$/i',
             'opacity' => 'required|integer|min:0|max:100',
+            'is_decoration' => 'sometimes|boolean',
         ]);
+
+        $validated['is_decoration'] = array_key_exists('is_decoration', $validated)
+            ? (bool) $validated['is_decoration']
+            : ($validated['type'] === 'decoration');
 
         $blocksMaster->update($validated);
         return $blocksMaster;
